@@ -44,7 +44,7 @@ npm install --save-dev buttonmash
 npx playwright install --with-deps chromium   # one-time browser install
 ```
 
-Requires Node 18+.
+Requires Node 20+.
 
 ## Quickstart
 
