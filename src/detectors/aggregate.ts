@@ -52,6 +52,21 @@ function reproFor(actions: LoggedAction[], step: number, max = 12): LoggedAction
   return upTo.slice(-max);
 }
 
+/**
+ * Attribute a signal to the action that most likely caused it. Async signals
+ * (network/console/pageerror) often arrive a step or two after their trigger
+ * and carry the wrong live `step`, so prefer timestamp ordering: the last
+ * action whose ts <= the signal's timestamp. Actions are in ascending ts order.
+ */
+function attributeStep(sig: Signal, actions: LoggedAction[]): number {
+  let best = sig.step ?? 0;
+  for (const a of actions) {
+    if (a.ts <= sig.at) best = a.step;
+    else break;
+  }
+  return best;
+}
+
 export interface AggregateInput {
   signals: Signal[];
   actions: LoggedAction[];
@@ -68,17 +83,15 @@ export function aggregateFindings(input: AggregateInput): Finding[] {
     // Informational dialogs and benign customs below 'low' aren't findings.
     const severity = sig.severity ?? meta.defaultSeverity;
     const dedupKey = findingDedupKey(meta.category, sig.url, sig.detail);
+    const step = attributeStep(sig, actions);
     const existing = byKey.get(dedupKey);
 
     if (existing) {
       existing.count += 1;
-      if (sig.step !== undefined && sig.step < existing.firstSeenStep) {
-        existing.firstSeenStep = sig.step;
-      }
+      if (step < existing.firstSeenStep) existing.firstSeenStep = step;
       continue;
     }
 
-    const step = sig.step ?? 0;
     const finding: Finding = {
       id: dedupKey,
       dedupKey,

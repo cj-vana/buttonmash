@@ -18,7 +18,11 @@ export function xmlEscape(s: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&apos;')
     // eslint-disable-next-line no-control-regex -- intentionally stripping chars illegal in XML 1.0
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+    // also strip XML 1.0 noncharacters and unpaired surrogates (reflected app text)
+    .replace(/[￾￿]/g, '')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1');
 }
 
 function reproText(f: Finding): string {

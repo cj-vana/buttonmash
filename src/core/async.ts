@@ -14,7 +14,12 @@ export function withDeadline<T>(p: Promise<T>, ms: number, label: string): Promi
   const guard = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new TimeoutError(label, ms)), ms);
   });
-  return Promise.race([p.finally(() => clearTimeout(timer)), guard]);
+  const settled = p.finally(() => clearTimeout(timer));
+  // If the deadline wins, the underlying work is abandoned but keeps running;
+  // swallow its eventual rejection so it can't surface as an unhandledRejection
+  // and crash the process mid-run.
+  settled.catch(() => {});
+  return Promise.race([settled, guard]);
 }
 
 export function sleep(ms: number): Promise<void> {

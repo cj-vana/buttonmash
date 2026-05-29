@@ -2,8 +2,11 @@
  * Deterministic, seeded pseudo-random number generation.
  *
  * The entire monkey is driven by a single {@link Rng} instance so that a given
- * seed reproduces a run byte-for-byte. Nothing in the engine may call
- * `Math.random` directly — every choice flows through here.
+ * seed reproduces the monkey's sequence of choices. Nothing in the engine may
+ * call `Math.random` directly — every choice flows through here. (Replay is
+ * reliable when the app renders the same DOM for the same inputs; the page
+ * clock is deliberately not frozen, so heavily time/async-driven apps may
+ * still diverge — see the README.)
  *
  * Algorithms (zero-dependency, full 32-bit math via `Math.imul`):
  *  - `xmur3`     hashes an arbitrary string seed into 32-bit integers.

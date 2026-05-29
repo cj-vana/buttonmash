@@ -9,7 +9,7 @@ import type { ResolvedConfig } from '../config/load';
 import { withDeadline } from '../core/async';
 import type { Severity } from '../core/types';
 import { scanTextForLiveMode } from '../guardrails/billing';
-import { scanForSecrets } from '../guardrails/secrets';
+import { redactString, scanForSecrets } from '../guardrails/secrets';
 import type { SignalRecorder } from './recorder';
 
 /** Mutable per-run state shared with the detectors. */
@@ -58,7 +58,14 @@ async function runAxe(deps: PageCheckDeps): Promise<void> {
     await withDeadline(page.evaluate(source), 8_000, 'axe/inject');
     const results = (await withDeadline(
       page.evaluate(async () => {
-        return (window as any).axe.run(document, { resultTypes: ['violations'] });
+        // Save/restore the (seeded) Math.random around axe so its internal RNG
+        // use doesn't perturb the app-under-test's deterministic stream.
+        const saved = Math.random;
+        try {
+          return await (window as any).axe.run(document, { resultTypes: ['violations'] });
+        } finally {
+          Math.random = saved;
+        }
       }),
       30_000,
       'axe/run',
@@ -147,7 +154,9 @@ export async function runPageChecks(deps: PageCheckDeps, newState: boolean): Pro
       if (idx === -1) continue;
       const before = html.slice(Math.max(0, idx - 25), idx);
       const unencoded = /[<>"'][^<>]{0,20}$/.test(before);
-      const ctx = html.slice(Math.max(0, idx - 40), idx + canary.length + 40);
+      const rawCtx = html.slice(Math.max(0, idx - 40), idx + canary.length + 40);
+      // Redact before persisting — a secret could be reflected next to the canary.
+      const ctx = cfg.guardrails.secrets.redact ? redactString(rawCtx) : rawCtx;
       recorder.add(
         'reflected-input',
         `input reflected into page${

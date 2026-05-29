@@ -191,9 +191,16 @@ Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 ## Reproducibility
 
 Every choice — which element, which action, which input — flows through a single
-seeded PRNG, and the in-page `Math.random` is seeded identically. Re-running with
-the same `--seed` against the same build reproduces the run. The seed is printed
-at startup and embedded in every report.
+seeded PRNG, and the in-page `Math.random` is seeded identically. The seed is
+printed at startup and embedded in every report, and replaying it makes the
+monkey take the **same decisions**.
+
+Caveat worth knowing: the page clock is **deliberately not frozen** (freezing
+time breaks many real apps). So replay is reliable for apps whose rendered DOM
+is stable given the same inputs; apps with heavy async-loaded content, polling,
+or wall-clock/`Math.random`-driven rendering can still diverge, because a
+different DOM at a step changes what the monkey sees and therefore what it picks
+next. Pinning the seed in CI plus a stable build gets you most of the way.
 
 ## Programmatic API
 

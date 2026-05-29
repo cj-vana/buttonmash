@@ -73,6 +73,14 @@ for(const f of r.findings){
 }
 `;
 
+/** Escape a value for safe interpolation into HTML markup. */
+function h(s: string): string {
+  return String(s).replace(
+    /[&<>"']/g,
+    (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[m]!,
+  );
+}
+
 export function buildHtml(result: RunResult, outDir: string): string {
   const enriched: RunResult = structuredClone(result);
   for (const f of enriched.findings) {
@@ -91,8 +99,8 @@ export function buildHtml(result: RunResult, outDir: string): string {
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>buttonmash report — ${verdict}</title><style>${STYLE}</style></head><body>` +
     `<header><h1>🐒 buttonmash report — ${verdict}</h1>` +
-    `<div class="muted">${result.run.target} · ${result.run.browser} · seed <code>${result.config.seed}</code> · ` +
-    `${(result.run.durationMs / 1000).toFixed(1)}s · ${new Date(result.run.startedAt).toLocaleString()}</div></header>` +
+    `<div class="muted">${h(result.run.target)} · ${h(result.run.browser)} · seed <code>${h(result.config.seed)}</code> · ` +
+    `${(result.run.durationMs / 1000).toFixed(1)}s · ${h(new Date(result.run.startedAt).toLocaleString())}</div></header>` +
     `<div class="wrap"><div id="app"></div></div>` +
     `<script id="data" type="application/json">${json}</script>` +
     `<script>${CLIENT}</script>` +

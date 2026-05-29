@@ -32,20 +32,25 @@ export function toSarif(result: RunResult): string {
             })),
           },
         },
-        results: result.findings.map((f) => ({
-          ruleId: f.category,
-          level: level(f.severity),
-          message: { text: `${f.title} (seen ${f.count}×)` },
-          locations: [
-            {
-              physicalLocation: {
-                artifactLocation: { uri: f.location.url },
-                region: { startLine: 1 },
+        results: result.findings.map((f) => {
+          // GitHub rejects the whole SARIF upload on a schema violation; ensure
+          // the uri is a valid URI reference (page.url() can be empty).
+          const uri = /^[a-z][a-z0-9+.-]*:/i.test(f.location.url) ? f.location.url : 'unknown';
+          return {
+            ruleId: f.category,
+            level: level(f.severity),
+            message: { text: `${f.title} (seen ${f.count}×)` },
+            locations: [
+              {
+                physicalLocation: {
+                  artifactLocation: { uri },
+                  region: { startLine: 1 },
+                },
               },
-            },
-          ],
-          partialFingerprints: { primaryLocationLineHash: f.dedupKey },
-        })),
+            ],
+            partialFingerprints: { primaryLocationLineHash: f.dedupKey },
+          };
+        }),
       },
     ],
   };

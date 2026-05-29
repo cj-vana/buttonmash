@@ -4,9 +4,18 @@
  * dismisses (never accepts) native dialogs, and recovers if a JS-driven
  * navigation slips off-origin.
  */
-import type { BrowserContext, Page } from 'playwright';
+import type { BrowserContext, Page, Request } from 'playwright';
 
 import type { SignalRecorder } from '../detectors/recorder';
+import { LIVE_HOSTS, inspectRequestForLiveMode, isPaymentHost } from './billing';
+
+function safePostData(req: Request): string | null {
+  try {
+    return req.postData();
+  } catch {
+    return null;
+  }
+}
 
 export interface FenceOptions {
   allowedOrigins: readonly string[];
@@ -15,6 +24,10 @@ export interface FenceOptions {
   /** Block media/font requests to cut noise. Images are kept so the
    *  broken-image detector stays meaningful. */
   blockMedia: boolean;
+  /** Billing guard mode — controls network-level payment blocking. */
+  billingMode: 'refuse' | 'warn' | 'off';
+  /** True once live billing has been detected anywhere in the run. */
+  isBillingLatched: () => boolean;
 }
 
 function safeOrigin(url: string): string {
@@ -60,25 +73,45 @@ export async function installFence(
   context.on('page', (p) => void closeStray(p));
   page.on('popup', (p) => void p.close().catch(() => {}));
 
-  // Route-level fence.
+  // Route-level fence — the network layer is the real safety boundary.
   await context.route('**/*', (route) => {
     const req = route.request();
     const type = req.resourceType();
     let origin = '';
+    let host = '';
     let pathname = '';
     try {
       const u = new URL(req.url());
       origin = u.origin;
+      host = u.host;
       pathname = u.pathname;
     } catch {
       return route.continue();
     }
 
+    // 1. Dangerous paths (logout/delete/cancel) — block for ANY resource type,
+    //    so a same-origin POST triggered by Enter or a benign submit can't fire.
+    if (opts.blockedPathRe?.test(pathname)) return route.abort('blockedbyclient');
+
+    // 2. Off-origin document navigations.
     const offOrigin = origin !== '' && !allowed.has(origin);
     if (type === 'document' && offOrigin) return route.abort('blockedbyclient');
-    if (type === 'document' && opts.blockedPathRe?.test(pathname)) {
-      return route.abort('blockedbyclient');
+
+    // 3. Payment safety: block real charges/tokenization at the network layer
+    //    while still allowing test-mode/sandbox flows to be fuzzed.
+    if (opts.billingMode !== 'off' && isPaymentHost(host)) {
+      const post = safePostData(req);
+      const liveByKey = inspectRequestForLiveMode(req.url(), post).length > 0;
+      const liveHost = LIVE_HOSTS.has(host);
+      if (liveHost || liveByKey || opts.isBillingLatched()) {
+        recorder.add('billing-live', `blocked live payment request → ${host}`, {
+          severity: opts.billingMode === 'refuse' ? 'critical' : 'medium',
+        });
+        return route.abort('blockedbyclient');
+      }
     }
+
+    // 4. Media/font noise (images kept so broken-image detection works).
     if (opts.blockMedia && (type === 'media' || type === 'font')) {
       return route.abort('blockedbyclient');
     }
@@ -103,6 +136,8 @@ export const KEEP_IN_PAGE_INIT = `
 (() => {
   const strip = () => {
     for (const a of document.querySelectorAll('a[target]')) a.removeAttribute('target');
+    for (const f of document.querySelectorAll('form[target]')) f.removeAttribute('target');
+    for (const b of document.querySelectorAll('[formtarget]')) b.removeAttribute('formtarget');
   };
   if (document.readyState !== 'loading') strip();
   document.addEventListener('DOMContentLoaded', strip);

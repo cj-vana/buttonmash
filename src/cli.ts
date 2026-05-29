@@ -111,10 +111,14 @@ async function doRun(url: string | undefined, opts: RunOpts, loadOpts: LoadOptio
     printSummary(result, outDir);
     process.exit(result.run.exitCode);
   } catch (err) {
+    const message = (err as Error).message ?? String(err);
     if (err instanceof ConfigError) {
-      logger.error(err.message);
+      logger.error(message);
+    } else if (/Executable doesn't exist|playwright install|browserType\.launch/i.test(message)) {
+      logger.error('The browser is not installed.');
+      logger.info(`Run:  npx playwright install --with-deps ${opts.browser ?? 'chromium'}`);
     } else {
-      logger.error(`buttonmash crashed: ${(err as Error).stack ?? (err as Error).message}`);
+      logger.error(`buttonmash crashed: ${(err as Error).stack ?? message}`);
     }
     process.exit(EXIT.ERROR);
   }

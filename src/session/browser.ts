@@ -26,15 +26,20 @@ export async function launchBrowser(engine: Engine, headless: boolean): Promise<
   });
 }
 
-/** Seeds the page's Math.random with the same algorithm as the engine RNG. */
+/** Seeds the page's Math.random with the same algorithm + seed as the engine
+ *  RNG (xmur3 → splitmix32), so the two streams are identical. */
 function seedPageRandom(seed: string): void {
   // This function body is serialized and run in the browser before page scripts.
+  // Mirror xmur3(seed)() exactly: char loop, then the full three-step finalizer.
   let h = 1779033703 ^ seed.length;
   for (let i = 0; i < seed.length; i++) {
     h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
     h = (h << 13) | (h >>> 19);
   }
-  let a = (Math.imul(h ^ (h >>> 16), 2246822507) ^ 0) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  h ^= h >>> 16;
+  let a = h >>> 0;
   Math.random = () => {
     a |= 0;
     a = (a + 0x9e3779b9) | 0;
@@ -73,6 +78,7 @@ export async function createDeterministicContext(
     reducedMotion: 'reduce',
     serviceWorkers: 'block',
     ignoreHTTPSErrors: true,
+    acceptDownloads: false, // never let a random click write a file to disk
     ...(cfg.report.captureVideo && videoDir
       ? { recordVideo: { dir: videoDir, size: cfg.viewport } }
       : {}),

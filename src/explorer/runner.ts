@@ -96,17 +96,37 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const { context, page } = await createDeterministicContext(browser, cfg, await ensureArtifactDir(outDir));
 
   attachSignalListeners({ page, recorder, cfg, ignore, customConsole, onBillingLive: markBillingLive });
-  await installFence(context, page, {
-    allowedOrigins: cfg.guardrails.allowedOrigins,
-    blockedPathRe,
-    blockMedia: cfg.guardrails.blockMedia,
-  }, recorder);
+  await installFence(
+    context,
+    page,
+    {
+      allowedOrigins: cfg.guardrails.allowedOrigins,
+      blockedPathRe,
+      blockMedia: cfg.guardrails.blockMedia,
+      billingMode: cfg.guardrails.billing.mode,
+      isBillingLatched: () => billingLive,
+    },
+    recorder,
+  );
   await startTracing(context, cfg);
 
   const explorer = new Explorer(rng, cfg.explore.epsilon);
   const navTimeout = Math.max(cfg.budget.actionTimeoutMs, 30_000);
 
-  // Initial navigation.
+  const gotoStart = async (): Promise<void> => {
+    await withDeadline(
+      page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
+      navTimeout + 5_000,
+      'goto',
+    ).catch((err) => {
+      recorder.add('driver', `navigation to target failed: ${(err as Error).message}`, {
+        severity: 'low',
+        url: cfg.target,
+      });
+    });
+  };
+
+  // Initial navigation (a hard failure here is critical).
   try {
     await withDeadline(
       page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
@@ -146,27 +166,29 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     recorder.setContext(i, url);
     pagesVisited.add(normalizeUrl(url));
 
-    // Reset to start when too deep or at a dead end.
+    // Reset to start when too deep or at a dead end (bounded so it can't hang).
     if (depth >= cfg.budget.maxDepth) {
-      await page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }).catch(() => {});
+      await gotoStart();
       depth = 0;
     }
 
+    // Brief settle so async content lands before we fingerprint the state.
+    await withDeadline(page.waitForLoadState('domcontentloaded'), 3_000, 'settle').catch(() => {});
+
     const signalsBefore = recorder.count();
+    // Discover and act with the smallest possible gap between them, so the
+    // chosen element's selector can't go stale before we classify + execute.
     const elements = await discoverElements(page);
-    const stateHash = stateFingerprint(url, elements.map((e) => e.fp));
+    const stateHash = stateFingerprint(
+      url,
+      elements.map((e) => e.fp),
+    );
     const newState = explorer.isNewState(stateHash);
     explorer.markState(stateHash);
     sinceNew = newState ? 0 : sinceNew + 1;
 
-    await runPageChecks({ page, recorder, cfg, state, markBillingLive }, newState);
-    if (billingLive && cfg.guardrails.billing.mode === 'refuse') {
-      stopReason = 'live billing mode detected (refusing to continue)';
-      break;
-    }
-
     if (elements.length === 0) {
-      await page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }).catch(() => {});
+      await gotoStart();
       depth = 0;
       continue;
     }
@@ -207,6 +229,12 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     if (navigated) depth += 1;
 
     await sleep(cfg.budget.throttleMs);
+
+    // Oracles run AFTER the action, on the resulting state — this keeps the
+    // expensive content/axe scans out of the discover→act window.
+    if (!page.isClosed()) {
+      await runPageChecks({ page, recorder, cfg, state, markBillingLive }, newState);
+    }
 
     // Screenshot the step if it surfaced new signals.
     if (cfg.report.captureScreenshots && recorder.count() > signalsBefore && !page.isClosed()) {

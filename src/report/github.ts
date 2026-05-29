@@ -6,8 +6,15 @@ import { appendFileSync } from 'node:fs';
 
 import type { RunResult, Severity } from '../core/types';
 
+/** Escape annotation message data (%/CR/LF). */
 function enc(s: string): string {
   return s.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A');
+}
+
+/** Escape an annotation *property* value — additionally `:` and `,` per the
+ *  workflow-command grammar (mirrors @actions/core escapeProperty). */
+function encProp(s: string): string {
+  return enc(s).replace(/:/g, '%3A').replace(/,/g, '%2C');
 }
 
 function annLevel(s: Severity): 'error' | 'warning' | 'notice' {
@@ -22,7 +29,7 @@ export function emitGitHub(result: RunResult): void {
   // GitHub caps displayed annotations (~10 each) — emit only the top findings.
   for (const f of result.findings.slice(0, 10)) {
     const level = annLevel(f.severity);
-    process.stdout.write(`::${level} title=${enc(f.title.slice(0, 80))}::${enc(`${f.location.url} — ${f.title}`)}\n`);
+    process.stdout.write(`::${level} title=${encProp(f.title.slice(0, 80))}::${enc(`${f.location.url} — ${f.title}`)}\n`);
   }
 
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;

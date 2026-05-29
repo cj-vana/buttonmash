@@ -67,4 +67,24 @@ describe('Rng', () => {
     expect(v).toBeGreaterThanOrEqual(0);
     expect(v).toBeLessThan(1);
   });
+
+  it('in-page seed derivation matches the engine (locks browser.ts seedPageRandom)', () => {
+    // Mirror of src/session/browser.ts seedPageRandom's derivation. If this
+    // drifts from xmur3(seed)(), the in-page Math.random stops matching the
+    // engine RNG and this test fails.
+    const pageSeed = (seed: string): number => {
+      let h = 1779033703 ^ seed.length;
+      for (let i = 0; i < seed.length; i++) {
+        h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+        h = (h << 13) | (h >>> 19);
+      }
+      h = Math.imul(h ^ (h >>> 16), 2246822507);
+      h = Math.imul(h ^ (h >>> 13), 3266489909);
+      h ^= h >>> 16;
+      return h >>> 0;
+    };
+    for (const seed of ['ci', 'hello-world', '42']) {
+      expect(pageSeed(seed)).toBe(xmur3(seed)());
+    }
+  });
 });
