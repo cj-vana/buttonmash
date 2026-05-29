@@ -51,6 +51,25 @@ function seedPageRandom(seed: string): void {
   };
 }
 
+// Record client-side (SPA) navigations so the crawler can discover routes the
+// app reaches via buttons/navigate() — not just <a href> links.
+const RECORD_NAV_INIT = `
+(() => {
+  try {
+    window.__bmNav = window.__bmNav || [];
+    const push = () => { try { window.__bmNav.push(String(location.href)); } catch {} };
+    for (const name of ['pushState', 'replaceState']) {
+      const orig = history[name];
+      if (typeof orig === 'function') {
+        history[name] = function (...args) { const r = orig.apply(this, args); push(); return r; };
+      }
+    }
+    window.addEventListener('popstate', push);
+    window.addEventListener('hashchange', push);
+  } catch {}
+})();
+`;
+
 const KILL_ANIMATIONS_INIT = `
 (() => {
   const css = '*,*::before,*::after{animation-duration:0s!important;animation-delay:0s!important;transition-duration:0s!important;transition-delay:0s!important;scroll-behavior:auto!important;}';
@@ -88,6 +107,7 @@ export async function createDeterministicContext(
   await context.addInitScript(seedPageRandom, cfg.seed);
   await context.addInitScript(KEEP_IN_PAGE_INIT);
   await context.addInitScript(KILL_ANIMATIONS_INIT);
+  await context.addInitScript(RECORD_NAV_INIT);
 
   const page = await context.newPage();
   page.setDefaultTimeout(cfg.budget.actionTimeoutMs);

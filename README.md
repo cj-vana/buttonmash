@@ -4,10 +4,11 @@
 [![npm](https://img.shields.io/npm/v/buttonmash.svg)](https://www.npmjs.com/package/buttonmash)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
-**A CI chaos monkey for web apps.** buttonmash drives a real browser, finds every
-button/link/input it can, and mashes them — clicking, double-clicking, typing
-random keystrokes, selecting, scrolling, resizing, navigating — trying to break
-your UI. When something breaks (an uncaught error, a 500, a crash, a blank
+**A CI chaos monkey for web apps.** Point it at your site and it **crawls every
+page on its own** — discovering links and in-app (SPA) navigations as it goes —
+then on each page finds every button/link/input and mashes them: clicking,
+double-clicking, typing random keystrokes, selecting, scrolling, resizing,
+navigating. When something breaks (an uncaught error, a 500, a crash, a blank
 screen, a broken image…) it writes a report and **fails your build**.
 
 It's deterministic (seeded, so any failure replays), bounded (action/time
@@ -95,6 +96,28 @@ jobs:
 buttonmash auto-detects GitHub Actions and emits inline annotations plus a job-summary
 table. The non-zero exit code fails the job.
 
+## Crawling the whole site
+
+By default buttonmash **auto-crawls**: starting from your target, it discovers
+every same-origin `<a href>` link *and* every client-side route the app
+navigates to via buttons/`navigate()` (it hooks `pushState`/`popstate`), queues
+them, and works through them breadth-first. When the link frontier runs dry it
+returns to the start and keeps clicking — so button-driven SPA shells (where the
+nav isn't `<a href>`) still get fully covered. One run, the whole reachable site:
+
+```bash
+npx buttonmash run https://staging.example.com   # crawls everything it can reach
+```
+
+Controls:
+
+- `budget.maxPages` — cap on distinct pages per run (default 100), so CI stays bounded.
+- `routes` — optional **hints**: pages nothing links to (e.g. a deep editor URL).
+  They seed the frontier; the crawl finds the rest. Also available as `--route <url...>`.
+- `explore.crawl: false` — disable auto-crawl and only sweep `target` + `routes`.
+
+Dangerous paths (logout/delete/cancel) and off-origin URLs are never enqueued.
+
 ## Configuration
 
 Create `buttonmash.config.ts` (or `.js`/`.json`) — `buttonmash init` writes a
@@ -108,7 +131,12 @@ export default defineConfig({
   seed: 'ci',
   auth: { storageState: 'playwright/.auth/user.json' },
 
-  budget: { maxActions: 500, maxDurationMs: 300_000, maxDepth: 12 },
+  budget: { maxActions: 500, maxDurationMs: 300_000, maxDepth: 12, maxPages: 100 },
+
+  // Auto-crawl is on by default; `routes` are optional hints for pages nothing
+  // links to (e.g. a deep editor). The crawl discovers everything else.
+  // routes: ['/dashboard', '/settings/billing'],
+  explore: { crawl: true },
 
   guardrails: {
     // allowedOrigins: ['https://staging.example.com'], // defaults to target origin
@@ -133,6 +161,7 @@ export default defineConfig({
 | Flag | Description |
 |---|---|
 | `--seed <s>` | Reproducibility seed (printed every run) |
+| `--route <url...>` | Extra route hints to sweep in the same run (crawl finds the rest) |
 | `--max-actions <n>` / `--max-duration <sec>` | Budget |
 | `--fail-on <severity>` | Min severity that fails the build (default `high`) |
 | `--dry-run` | Read-only: explore without submitting or mutating |
@@ -216,9 +245,11 @@ if (result.run.exitCode !== 0) process.exit(1);
 
 ```
 launch (Playwright) → auth (storageState) → fence (origin/dialogs/popups)
-  → loop: discover interactive elements → fingerprint state (coverage)
-          → run oracles → choose element (epsilon-greedy) → gate (safety)
-          → perform action → log trace → capture artifacts on signal
+  → crawl frontier (target + routes; grows with discovered links + SPA navs)
+  → per page: discover interactive elements → fingerprint state (coverage)
+          → choose element (epsilon-greedy) → gate (safety) → perform action
+          → log trace → capture artifacts on signal
+          → when exhausted, move to the next page in the frontier
   → aggregate + dedupe → report (json/junit/html/sarif) → exit code
 ```
 

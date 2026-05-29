@@ -33,6 +33,8 @@ const BudgetSchema = z
     maxDepth: z.number().int().positive().default(12),
     /** Stop early after this many consecutive actions reveal no new state. */
     saturationLimit: z.number().int().positive().default(80),
+    /** Max distinct pages to crawl before stopping (bounds a full-site sweep). */
+    maxPages: z.number().int().positive().default(100),
     /** Delay between actions so async work can settle. */
     throttleMs: z.number().int().nonnegative().default(120),
     /** Per-action wall-clock watchdog; exceeding it is recorded as a hang. */
@@ -70,6 +72,10 @@ const ExploreSchema = z
     weights: ActionWeightsSchema,
     /** Fuzz text inputs with the safe corpus. */
     fuzzInputs: z.boolean().default(true),
+    /** Auto-crawl: discover same-origin links as it explores and visit every
+     *  reachable page. With this on, pointing at the site root sweeps the whole
+     *  site — `routes` become optional hints for pages nothing links to. */
+    crawl: z.boolean().default(true),
   })
   .default({});
 
@@ -168,6 +174,13 @@ const ReportSchema = z
 export const ConfigSchema = z.object({
   /** Start URL. Required, but may be supplied as the CLI argument instead. */
   target: z.string().url().optional(),
+  /**
+   * Additional routes to sweep in the same run (paths relative to the target,
+   * or absolute same-origin URLs). The explorer rotates through target + these
+   * on every reset, so one run covers deep areas (dashboards, editors) that
+   * random clicking would rarely reach on its own.
+   */
+  routes: z.array(z.string()).default([]),
   /** Reproducibility seed. Omit for a random (but printed) seed. */
   seed: z.string().optional(),
   browser: BrowserSchema.default('chromium'),

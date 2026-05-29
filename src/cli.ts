@@ -39,11 +39,13 @@ interface RunOpts {
   allowOrigin?: string[];
   billing?: 'refuse' | 'warn' | 'off';
   logLevel?: string;
+  route?: string[];
 }
 
 function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
   const ov: Partial<Config> = {};
   if (url) ov.target = url;
+  if (o.route?.length) ov.routes = o.route;
   if (o.seed) ov.seed = o.seed;
   if (o.browser) ov.browser = o.browser;
   if (o.headed) ov.headless = false;
@@ -130,6 +132,7 @@ program
   .argument('[url]', 'target URL (overrides config `target`)')
   .option('-c, --config <path>', 'path to a buttonmash config file')
   .option('-s, --seed <seed>', 'reproducibility seed')
+  .option('--route <url...>', 'additional route(s) to sweep in the same run (one run covers them all)')
   .option('-b, --browser <engine>', 'chromium | firefox | webkit')
   .option('--headed', 'run with a visible browser window')
   .option('--max-actions <n>', 'maximum actions to perform')
@@ -212,7 +215,11 @@ export default defineConfig({
   // An authenticated session captured with: buttonmash auth <login-url>
   auth: { storageState: 'playwright/.auth/user.json' },
 
-  budget: { maxActions: 500, maxDurationMs: 300_000 },
+  budget: { maxActions: 500, maxDurationMs: 300_000, maxPages: 100 },
+
+  // Auto-crawl is on by default — buttonmash sweeps the whole reachable site.
+  // 'routes' are optional hints for pages nothing links to (e.g. a deep editor).
+  // routes: ['/dashboard'],
 
   guardrails: {
     // Stay on these origins (defaults to the target's origin).

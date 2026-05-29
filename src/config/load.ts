@@ -16,9 +16,11 @@ export class ConfigError extends Error {
 }
 
 /** Config with all required values resolved. */
-export interface ResolvedConfig extends Omit<ParsedConfig, 'target' | 'seed'> {
+export interface ResolvedConfig extends Omit<ParsedConfig, 'target' | 'seed' | 'routes'> {
   target: string;
   seed: string;
+  /** Absolute, same-origin-resolved seed routes (excludes the target itself). */
+  routes: string[];
   /** Absolute path of the config file used, if any. */
   configPath?: string;
 }
@@ -140,14 +142,29 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
     throw new ConfigError(`Invalid target URL: ${target}`);
   }
 
-  // Default the origin allowlist to the target's origin; always include it.
-  const allowedOrigins = cfg.guardrails.allowedOrigins.length
-    ? Array.from(new Set([...cfg.guardrails.allowedOrigins, origin]))
+  // Resolve seed routes against the target origin (relative or absolute).
+  const routes: string[] = [];
+  for (const r of cfg.routes) {
+    try {
+      const u = new URL(r, target).toString();
+      if (u !== target) routes.push(u);
+    } catch {
+      throw new ConfigError(`Invalid route: ${r}`);
+    }
+  }
+  const routeOrigins = routes.map((r) => new URL(r).origin);
+
+  // Default the origin allowlist to the target's origin; always include it and
+  // any route origins.
+  const baseAllowed = cfg.guardrails.allowedOrigins.length
+    ? [...cfg.guardrails.allowedOrigins, origin]
     : [origin];
+  const allowedOrigins = Array.from(new Set([...baseAllowed, ...routeOrigins]));
 
   return {
     ...cfg,
     target,
+    routes,
     seed: cfg.seed ?? makeDefaultSeed(),
     guardrails: { ...cfg.guardrails, allowedOrigins },
     configPath,

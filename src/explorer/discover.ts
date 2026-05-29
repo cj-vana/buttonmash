@@ -123,6 +123,52 @@ function collect(selector: string): RawDescriptor[] {
   return out;
 }
 
+/**
+ * Collect every same-origin link target on the page (resolved to absolute
+ * URLs), including framework `<Link>`s which render as `<a href>`. This is what
+ * powers auto-crawl: the URLs feed a frontier the explorer works through.
+ */
+export async function collectLinks(page: Page): Promise<string[]> {
+  try {
+    return await withDeadline(
+      page.evaluate(() => {
+        const urls = new Set<string>();
+        for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+          const href = (a as HTMLAnchorElement).href; // already absolute
+          if (href) urls.add(href);
+        }
+        return Array.from(urls);
+      }),
+      5_000,
+      'collect-links',
+    );
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Drain the in-page log of client-side (SPA) navigations recorded since the
+ * last call. Lets the crawler discover routes reached via buttons/`navigate()`,
+ * which never appear as `<a href>` links.
+ */
+export async function drainNavLog(page: Page): Promise<string[]> {
+  try {
+    return await withDeadline(
+      page.evaluate(() => {
+        const w = window as unknown as { __bmNav?: string[] };
+        const arr = Array.isArray(w.__bmNav) ? w.__bmNav.slice() : [];
+        w.__bmNav = [];
+        return arr;
+      }),
+      4_000,
+      'drain-nav',
+    );
+  } catch {
+    return [];
+  }
+}
+
 export async function discoverElements(page: Page): Promise<ElementDescriptor[]> {
   let raws: RawDescriptor[];
   try {

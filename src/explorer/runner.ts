@@ -36,7 +36,7 @@ import { installFence, isAllowedOrigin } from '../guardrails/fence';
 import { launchBrowser, createDeterministicContext } from '../session/browser';
 import { validateStorageState } from '../session/auth';
 import { executeAction, gatePlan, planAction, type ActionContext } from './actions';
-import { discoverElements, INTERACTIVE_SELECTOR } from './discover';
+import { collectLinks, discoverElements, drainNavLog, INTERACTIVE_SELECTOR } from './discover';
 import { Explorer } from './explorer';
 
 import { version } from '../version';
@@ -131,18 +131,76 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const explorer = new Explorer(rng, cfg.explore.epsilon);
   const navTimeout = Math.max(cfg.budget.actionTimeoutMs, 30_000);
 
-  const gotoStart = async (): Promise<void> => {
+  // Crawl frontier. Configured routes seed it; when crawl is on, every
+  // same-origin link discovered while exploring is enqueued too, so one run
+  // sweeps the whole reachable site breadth-first. Dangerous/off-origin URLs
+  // are never enqueued.
+  const FRONTIER_CAP = 5000;
+  const visited = new Set<string>(); // normalized URLs already explored
+  const queued = new Set<string>(); // normalized URLs currently in the frontier
+  const frontier: string[] = []; // absolute URLs to visit (FIFO)
+
+  const enqueue = (raw: string): void => {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      return;
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+    if (!allowedSet.has(u.origin)) return;
+    if (blockedPathRe?.test(u.pathname)) return;
+    const n = normalizeUrl(raw);
+    if (visited.has(n) || queued.has(n) || frontier.length >= FRONTIER_CAP) return;
+    queued.add(n);
+    frontier.push(raw);
+  };
+
+  for (const s of cfg.routes) enqueue(s);
+
+  const gotoUrl = async (u: string): Promise<void> => {
     await withDeadline(
-      page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
+      page.goto(u, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
       navTimeout + 5_000,
       'goto',
     ).catch((err) => {
-      recorder.add('driver', `navigation to target failed: ${(err as Error).message}`, {
+      recorder.add('driver', `navigation to ${u} failed: ${(err as Error).message}`, {
         severity: 'low',
-        url: cfg.target,
+        url: u,
       });
     });
   };
+
+  /** Navigate to the next unvisited page in the frontier; false if empty. */
+  const gotoNext = async (): Promise<boolean> => {
+    while (frontier.length > 0) {
+      const u = frontier.shift()!;
+      queued.delete(normalizeUrl(u));
+      if (visited.has(normalizeUrl(u))) continue;
+      await gotoUrl(u);
+      return true;
+    }
+    return false;
+  };
+
+  // Move to the next page. When the link/nav frontier is dry, return to the
+  // target and keep exploring — many SPAs navigate via buttons, so re-clicking
+  // around the app surfaces new routes (the explorer remembers what it already
+  // tried). Give up only after several returns reveal no new page.
+  let emptyReturns = 0;
+  let pagesAtLastEmpty = -1;
+  const moveOn = async (): Promise<boolean> => {
+    if (await gotoNext()) return true;
+    if (visited.size === pagesAtLastEmpty) emptyReturns += 1;
+    else emptyReturns = 0;
+    pagesAtLastEmpty = visited.size;
+    if (emptyReturns >= 3) return false;
+    await gotoUrl(cfg.target);
+    return true;
+  };
+
+  if (cfg.explore.crawl) logger.info('Crawl:   auto-discovering links across the site');
+  else if (cfg.routes.length) logger.info(`Routes:  sweeping ${1 + cfg.routes.length} routes`);
 
   // Initial navigation (a hard failure here is critical).
   try {
@@ -158,6 +216,9 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     });
   }
 
+  const crawlDone = (): string =>
+    cfg.explore.crawl ? 'crawl complete — no more pages to visit' : 'all routes swept';
+
   let depth = 0;
   let sinceNew = 0;
   let stopReason = 'budget exhausted';
@@ -167,8 +228,8 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       stopReason = 'time budget reached';
       break;
     }
-    if (sinceNew >= cfg.budget.saturationLimit) {
-      stopReason = `state saturated (${sinceNew} actions without new state)`;
+    if (visited.size >= cfg.budget.maxPages) {
+      stopReason = `page budget reached (${cfg.budget.maxPages} pages)`;
       break;
     }
     if (billingLive && cfg.guardrails.billing.mode === 'refuse') {
@@ -180,25 +241,38 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       break;
     }
 
-    // Recover to the start URL if we're too deep, or if a click left us
-    // off-origin / on a blank or browser-error page (e.g. an aborted external
-    // navigation). The fence already prevents off-origin content from loading;
-    // this keeps the monkey productively on-origin afterwards.
+    // Move to the next page when this one is exhausted (saturated), we've gone
+    // too deep, or a click left us off-origin / on a blank or error page. If the
+    // frontier is empty, the whole reachable site has been covered.
     let url = page.url();
     const offOrigin = !isAllowedOrigin(url, allowedSet);
     const deadPage = url === 'about:blank' || url === '' || url.startsWith('chrome-error');
-    if (depth >= cfg.budget.maxDepth || offOrigin || deadPage) {
-      await gotoStart();
+    const saturated = sinceNew >= cfg.budget.saturationLimit;
+    if (depth >= cfg.budget.maxDepth || offOrigin || deadPage || saturated) {
+      if (!(await moveOn())) {
+        stopReason = crawlDone();
+        break;
+      }
       depth = 0;
+      sinceNew = 0;
       url = page.url();
     }
+    const nUrl = normalizeUrl(url);
     recorder.setContext(i, url);
-    pagesVisited.add(normalizeUrl(url));
+    pagesVisited.add(nUrl);
+    visited.add(nUrl);
 
     // Wait for the app to actually render interactive content. Client-rendered
     // SPAs return from 'domcontentloaded' before React/Vue has mounted, so we
     // also wait (bounded) for at least one interactive element to appear.
     await awaitReady(page, cfg.budget.readyTimeoutMs);
+
+    // Grow the frontier with same-origin links AND any client-side (SPA)
+    // navigations the app made (button/navigate() routes that aren't <a href>).
+    if (cfg.explore.crawl) {
+      for (const link of await collectLinks(page)) enqueue(link);
+      for (const nav of await drainNavLog(page)) enqueue(nav);
+    }
 
     const signalsBefore = recorder.count();
     // Discover and act with the smallest possible gap between them, so the
@@ -213,7 +287,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     sinceNew = newState ? 0 : sinceNew + 1;
 
     if (elements.length === 0) {
-      await gotoStart();
+      if (!(await moveOn())) {
+        stopReason = crawlDone();
+        break;
+      }
       depth = 0;
       continue;
     }

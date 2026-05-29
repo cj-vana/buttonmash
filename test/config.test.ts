@@ -39,6 +39,23 @@ describe('loadConfig', () => {
     ).rejects.toBeInstanceOf(ConfigError);
   });
 
+  it('resolves relative routes against the target and allows their origins', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://app.example.com/dashboard',
+        routes: ['/a', '/b/c', 'https://app.example.com/d'],
+      },
+    });
+    expect(cfg.routes).toEqual([
+      'https://app.example.com/a',
+      'https://app.example.com/b/c',
+      'https://app.example.com/d',
+    ]);
+    expect(cfg.guardrails.allowedOrigins).toContain('https://app.example.com');
+    expect(cfg.explore.crawl).toBe(true); // auto-crawl on by default
+  });
+
   it('rejects invalid enum values', async () => {
     await expect(
       loadConfig({
