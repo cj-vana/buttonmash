@@ -28,3 +28,19 @@ describe('secrets', () => {
     expect(scanForSecrets('just some harmless text')).toHaveLength(0);
   });
 });
+
+describe('secret rule bounds', () => {
+  it('redacts and reports Stripe keys longer than 99 chars (used to bypass entirely)', () => {
+    const long = 'sk_live_' + 'a'.repeat(120);
+    const { redacted } = redact(`key=${long}`);
+    expect(redacted).toContain('[REDACTED:stripe-secret-key]');
+    expect(redacted).not.toContain('sk_live_aaaa');
+    expect(scanForSecrets(long).map((h) => h.ruleId)).toContain('stripe-secret-key');
+  });
+
+  it('redacts JWTs but does not report them as leaks (every SSR app inlines one)', () => {
+    const jwt = 'ey' + 'a'.repeat(20) + '.ey' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
+    expect(redact(`token=${jwt}`).redacted).toContain('[REDACTED:jwt]');
+    expect(scanForSecrets(jwt).map((h) => h.ruleId)).not.toContain('jwt');
+  });
+});

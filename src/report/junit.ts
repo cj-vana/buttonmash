@@ -46,9 +46,16 @@ export function toJUnit(result: RunResult): string {
       const name = xmlEscape(`${f.title} [${f.dedupKey}]`);
       const type = xmlEscape(`${f.severity}:${f.category}`);
       const msg = xmlEscape(f.title);
+      // The [[ATTACHMENT|…]] convention surfaces screenshots in Jenkins/GitLab/
+      // CircleCI test UIs that would otherwise show text only.
+      const attachments = f.artifacts
+        .filter((a) => a.type === 'screenshot')
+        .map((a) => `      <system-out>[[ATTACHMENT|${xmlEscape(a.path)}]]</system-out>\n`)
+        .join('');
       cases.push(
         `    <testcase name="${name}" classname="buttonmash.${xmlEscape(f.category)}" time="0">\n` +
           `      <failure message="${msg}" type="${type}">${xmlEscape(reproText(f))}</failure>\n` +
+          attachments +
           `    </testcase>`,
       );
     }

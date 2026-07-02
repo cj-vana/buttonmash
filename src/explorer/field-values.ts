@@ -57,27 +57,41 @@ function num(field: FieldDescriptor, r: Rng): string {
   const lo = Number.isFinite(min) ? min : 1;
   const hi = Number.isFinite(max) && max >= lo ? max : lo + 9;
   let v = r.intBetween(Math.ceil(lo), Math.floor(hi));
-  if (Number.isFinite(step) && step > 0) v = lo + Math.round((v - lo) / step) * step;
+  if (Number.isFinite(step) && step > 0) {
+    v = lo + Math.round((v - lo) / step) * step;
+    // Snapping can overshoot the range (min 0 / max 10 / step 4 → 12), and
+    // fractional steps leave float artifacts — both fail native validation
+    // identically on every retry.
+    if (v > hi) v = v - step >= lo ? v - step : lo;
+    if (v < lo) v = lo;
+    v = Number(v.toFixed(6));
+  }
   return String(v);
 }
 
-/** Seed-derived date (NOT wall-clock) within [min,max] if given. */
+/** Seed-derived date/time (NOT wall-clock) within [min,max] if given, in the
+ *  exact value format the input type requires. */
 function dateValue(field: FieldDescriptor, r: Rng): string {
   // Base epoch day for 2026-01-01, plus a seeded offset within a 2-year window.
   const baseDay = Math.floor(Date.parse('2026-01-01T00:00:00Z') / 86_400_000);
   let day = baseDay + r.intBetween(0, 729);
-  const toIso = (d: number) => new Date(d * 86_400_000).toISOString();
   const minDay = field.min ? Math.floor(Date.parse(field.min) / 86_400_000) : null;
   const maxDay = field.max ? Math.floor(Date.parse(field.max) / 86_400_000) : null;
   if (minDay && Number.isFinite(minDay) && day < minDay) day = minDay;
   if (maxDay && Number.isFinite(maxDay) && day > maxDay) day = maxDay;
-  const iso = toIso(day);
+  const iso = new Date(day * 86_400_000).toISOString();
+  const hhmm = `${String(r.intBetween(8, 18)).padStart(2, '0')}:${String(r.intBetween(0, 59)).padStart(2, '0')}`;
   switch (field.kind) {
-    case 'date':
-      return iso.slice(0, 10);
+    case 'datetime-local':
+      return `${iso.slice(0, 10)}T${hhmm}`;
+    case 'month':
+      return iso.slice(0, 7);
+    case 'week':
+      return `${iso.slice(0, 4)}-W${String(r.intBetween(1, 52)).padStart(2, '0')}`;
+    case 'time':
+      return hhmm;
     default:
-      // datetime-local style for any other date-ish text input
-      return iso.slice(0, 16);
+      return iso.slice(0, 10); // date
   }
 }
 
@@ -137,6 +151,10 @@ export function valueForField(runId: string, field: FieldDescriptor, attempt = 0
     case 'range':
       return { value: num(field, r) };
     case 'date':
+    case 'datetime-local':
+    case 'month':
+    case 'week':
+    case 'time':
       return { value: dateValue(field, r) };
     case 'color':
       return { value: `#${salt.slice(0, 6)}` };

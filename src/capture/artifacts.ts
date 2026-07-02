@@ -6,7 +6,7 @@
  */
 import { readFileSync, statSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import type { BrowserContext, Page } from 'playwright';
 
@@ -64,10 +64,14 @@ export async function captureScreenshot(
   }
 }
 
-/** Read a small image as a data URI for inlining; undefined if too big/missing. */
+/** Read a small image as a data URI for inlining; undefined if too big/missing.
+ *  Refuses paths that escape the report directory — the public API accepts an
+ *  arbitrary RunResult, and a hostile artifact path must not inline `../.env`
+ *  into the report. */
 export function inlineThumb(outDir: string, relPath: string, mime = 'image/png'): string | undefined {
   try {
-    const abs = join(outDir, relPath);
+    const abs = resolve(outDir, relPath);
+    if (!abs.startsWith(resolve(outDir) + sep)) return undefined;
     if (statSync(abs).size > THUMB_INLINE_LIMIT) return undefined;
     return `data:${mime};base64,${readFileSync(abs).toString('base64')}`;
   } catch {

@@ -50,7 +50,9 @@ function fieldKind(el: ElementDescriptor): FieldDescriptor['kind'] | null {
     if (t === 'password') return 'password';
     if (t === 'color') return 'color';
     if (t === 'file') return 'file';
-    if (['date', 'datetime-local', 'month', 'week', 'time'].includes(t)) return 'date';
+    // Keep the exact type: each has its own value format, and fill() throws
+    // "Malformed value" on a plain YYYY-MM-DD in a datetime-local/month/week/time.
+    if (t === 'date' || t === 'datetime-local' || t === 'month' || t === 'week' || t === 'time') return t;
     return 'text';
   }
   if (el.role === 'textbox') return 'text';

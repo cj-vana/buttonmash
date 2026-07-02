@@ -71,3 +71,35 @@ describe('valueForField', () => {
     expect(r.value).toContain(r.canary!);
   });
 });
+
+describe('date-family formats', () => {
+  const base = {
+    selector: 'input',
+    fp: 'x',
+    name: 'when',
+    label: '',
+    placeholder: '',
+    required: true,
+    formKey: 'f',
+  } as const;
+
+  it('emits the exact value format each input type requires', () => {
+    expect(valueForField('run', { ...base, kind: 'date' }).value).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(valueForField('run', { ...base, kind: 'datetime-local' }).value).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,
+    );
+    expect(valueForField('run', { ...base, kind: 'month' }).value).toMatch(/^\d{4}-\d{2}$/);
+    expect(valueForField('run', { ...base, kind: 'week' }).value).toMatch(/^\d{4}-W\d{2}$/);
+    expect(valueForField('run', { ...base, kind: 'time' }).value).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it('number step snapping never overshoots max', () => {
+    for (let i = 0; i < 20; i++) {
+      const v = Number(
+        valueForField(`run${i}`, { ...base, kind: 'number', min: '0', max: '10', step: '4' }).value,
+      );
+      expect(v).toBeGreaterThanOrEqual(0);
+      expect(v).toBeLessThanOrEqual(10);
+    }
+  });
+});

@@ -19,7 +19,10 @@ export function fnv1a(str: string): string {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-const VOLATILE_PARAM = /^(utm_|_|sid|session|sess|token|ts|cb|nonce|csrf|xsrf|v|cache)/i;
+// utm_*/_* are prefix families; the rest must match the WHOLE param name —
+// a bare prefix match ate `view`, `version`, `side`, `cbid`… so distinct pages
+// normalized identically and were never crawled.
+const VOLATILE_PARAM = /^(?:utm_|_)|^(?:sid|session|sess|token|ts|cb|nonce|csrf|xsrf|v|cache)$/i;
 
 /**
  * Normalize a URL for state comparison: drop the hash, strip volatile query
@@ -78,6 +81,12 @@ export function stateFingerprint(url: string, elementFps: readonly string[]): st
  */
 export function findingDedupKey(category: string, url: string, signature: string): string {
   const normSig = signature
+    // URLs embedded in messages/stack frames carry volatile hash/query state
+    // (SPA `#/routes`, cache-busters) — the same error thrown from
+    // `app/:24:7` and `app/#detail:24:7` is one bug, not two. Peel the stack
+    // frame's `:line:col` off before parsing: after a fragment it would vanish
+    // with the hash, in a path it would survive — and the variants would split.
+    .replace(/https?:\/\/[^\s)'"]+/gi, (u) => normalizeUrl(u.replace(/:\d+:\d+$/, '')))
     .replace(/0x[0-9a-f]+/gi, '0x_')
     .replace(/:\d+:\d+/g, ':_:_')
     .replace(/\b\d{3,}\b/g, '_')

@@ -16,7 +16,9 @@ export interface SecretRule {
 }
 
 export const SECRET_RULES: SecretRule[] = [
-  { id: 'stripe-secret-key', re: /\b(?:sk|rk)_(?:test|live|prod)_[a-zA-Z0-9]{10,99}\b/g },
+  // No upper bound: `{10,99}` made keys with a >99-char tail match nothing at
+  // all (not truncate), so a long live key was neither redacted nor reported.
+  { id: 'stripe-secret-key', re: /\b(?:sk|rk)_(?:test|live|prod)_[a-zA-Z0-9]{10,}\b/g },
   { id: 'stripe-webhook-secret', re: /\bwhsec_[a-zA-Z0-9]{20,}\b/g },
   { id: 'aws-access-key-id', re: /\b(?:A3T[A-Z0-9]|AKIA|ASIA|ABIA|ACCA)[A-Z2-7]{16}\b/g },
   { id: 'github-pat', re: /\bghp_[0-9a-zA-Z]{36}\b/g },
@@ -75,6 +77,11 @@ export interface SecretHit {
   context: string;
 }
 
+/** Redacted from artifacts but NOT reported as leaks: a session/CSRF JWT
+ *  inlined into the HTML is how practically every authenticated SSR app works —
+ *  reporting it as a high-severity secret-leak reddens normal builds. */
+const REPORT_EXCLUDED = new Set(['jwt']);
+
 /**
  * Find client-exposed secrets in a blob of page text. Publishable keys are
  * intentionally excluded — they belong to billing-mode detection, not leak
@@ -83,6 +90,7 @@ export interface SecretHit {
 export function scanForSecrets(text: string): SecretHit[] {
   const hits: SecretHit[] = [];
   for (const { id, re } of SECRET_RULES) {
+    if (REPORT_EXCLUDED.has(id)) continue;
     // Fresh regex to avoid lastIndex state across calls on the shared /g rule.
     const rx = new RegExp(re.source, re.flags);
     let m: RegExpExecArray | null;

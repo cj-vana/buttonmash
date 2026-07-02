@@ -37,3 +37,10 @@ describe('billing live-mode detection', () => {
     expect(isPaymentHost('example.com')).toBe(false);
   });
 });
+
+describe('key length bounds', () => {
+  it('detects live keys longer than 99 chars (the old {10,99} matched nothing)', async () => {
+    const { scanTextForLiveMode } = await import('../src/guardrails/billing');
+    expect(scanTextForLiveMode('pk_live_' + 'a'.repeat(120)).length).toBeGreaterThan(0);
+  });
+});

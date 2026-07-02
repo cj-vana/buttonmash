@@ -41,6 +41,7 @@ const KIND_META: Record<SignalKind, KindMeta> = {
   'billing-live': { category: 'billing-live', defaultSeverity: 'critical', label: 'Live billing mode' },
   'form-validation': { category: 'form-validation', defaultSeverity: 'low', label: 'Form not accepted' },
   'session-lost': { category: 'session-lost', defaultSeverity: 'high', label: 'Session lost (logged out mid-run)' },
+  guardrail: { category: 'guardrail', defaultSeverity: 'info', label: 'Guardrail' },
   custom: { category: 'custom', defaultSeverity: 'medium', label: 'Custom rule' },
   driver: { category: 'driver-error', defaultSeverity: 'medium', label: 'Driver error' },
 };
@@ -85,7 +86,10 @@ export function aggregateFindings(input: AggregateInput): Finding[] {
     const meta = KIND_META[sig.kind];
     // Informational dialogs and benign customs below 'low' aren't findings.
     const severity = sig.severity ?? meta.defaultSeverity;
-    const dedupKey = findingDedupKey(meta.category, sig.url, sig.detail);
+    // Fold the exact HTTP status into the key: the signature's digit-stripping
+    // would otherwise merge a 401 and a 404 on the same route into one finding.
+    const statusTag = typeof sig.meta?.status === 'number' ? `:${sig.meta.status}` : '';
+    const dedupKey = findingDedupKey(meta.category + statusTag, sig.url, sig.detail);
     const step = attributeStep(sig, actions);
     const existing = byKey.get(dedupKey);
 

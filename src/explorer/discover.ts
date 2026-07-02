@@ -141,7 +141,12 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
 
   const out: RawDescriptor[] = [];
   const seen = new Set<Element>();
-  let bm = 0;
+  // Monotonic across discovery passes (persisted on window): restarting at 0
+  // would re-issue tags that *hidden* elements still carry from earlier passes,
+  // so two elements could match the same [data-bm-id] and actions could land
+  // on the wrong one.
+  const w = window as unknown as { __bmSeq?: number };
+  let bm = w.__bmSeq ?? 0;
 
   const handle = (e: Element, inShadow: boolean): void => {
     if (seen.has(e) || !isVisible(e)) return;
@@ -237,6 +242,7 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
     }
   };
   visit(document, false);
+  w.__bmSeq = bm;
   return out;
 }
 

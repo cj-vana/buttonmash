@@ -37,9 +37,12 @@ export function emitGitHub(result: RunResult): void {
 
   const f = result.stats.findingsBySeverity;
   const verdict = result.run.exitCode === 0 ? '✅ PASSED' : '❌ FAILED';
+  // Truncate BEFORE escaping (a cut mid-escape leaves a dangling backslash),
+  // and escape the URL cell too — browsers don't encode `|` in query strings.
+  const cell = (s: string, max: number) => s.slice(0, max).replace(/\|/g, '\\|');
   const rows = result.findings
     .slice(0, 50)
-    .map((x) => `| ${x.severity} | ${x.title.replace(/\|/g, '\\|').slice(0, 100)} | ${x.count} | ${x.location.url} |`)
+    .map((x) => `| ${x.severity} | ${cell(x.title, 100)} | ${x.count} | ${cell(x.location.url, 120)} |`)
     .join('\n');
 
   const md =

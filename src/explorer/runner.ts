@@ -16,6 +16,7 @@ import { logger } from '../core/logger';
 import { anyMatch, compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
 import {
+  EXIT,
   SEVERITY_ORDER,
   type LoggedAction,
   type RunResult,
@@ -57,7 +58,19 @@ async function awaitReady(page: Page, ms: number): Promise<void> {
   await withDeadline(page.waitForLoadState('load'), ms, 'load').catch(() => {});
   await page
     .waitForFunction(
-      (sel) => document.querySelectorAll(sel as string).length > 0,
+      (sel) => {
+        if (document.querySelectorAll(sel as string).length > 0) return true;
+        // Shadow-DOM apps (Lit/Stencil) and iframe UIs keep every control out
+        // of the light DOM — an open shadow root or a frame counts as ready,
+        // or this probe would burn the full timeout on every single action.
+        if (document.querySelector('iframe')) return true;
+        const els = document.querySelectorAll('*');
+        const cap = Math.min(els.length, 4000);
+        for (let i = 0; i < cap; i++) {
+          if ((els[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) return true;
+        }
+        return false;
+      },
       INTERACTIVE_SELECTOR,
       { timeout: ms, polling: 250 },
     )
@@ -78,7 +91,11 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   logger.info(`Budget:  ${cfg.budget.maxActions} actions / ${Math.round(cfg.budget.maxDurationMs / 1000)}s`);
   if (cfg.guardrails.dryRun) logger.info('Mode:    DRY RUN (read-only)');
 
-  if (cfg.auth.storageState) await validateStorageState(cfg.auth.storageState);
+  // An invalid/missing auth file falls back to an unauthenticated run — passing
+  // the path through anyway would make browser.newContext() throw (exit 2).
+  if (cfg.auth.storageState && !(await validateStorageState(cfg.auth.storageState))) {
+    cfg = { ...cfg, auth: { ...cfg.auth, storageState: undefined } };
+  }
 
   const rng = new Rng(cfg.seed);
   const recorder = new SignalRecorder();
@@ -133,9 +150,16 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     isBillingLatched: () => billingLive,
   };
   // Page-bound wiring, re-attachable to a recreated page after a crash.
+  // Playwright does NOT close a crashed page — it stays open and every
+  // operation throws "Target crashed" — so recovery keys on this latch,
+  // not on page.isClosed().
+  let pageCrashed = false;
   const wirePage = (p: typeof page): void => {
     attachSignalListeners({ page: p, recorder, cfg, ignore, customConsole, onBillingLive: markBillingLive });
     attachPageFence(p, fenceOpts, recorder);
+    p.on('crash', () => {
+      pageCrashed = true;
+    });
   };
   const setupPage = async (): Promise<typeof page> => {
     const p = await context.newPage(); // inherits context init scripts + routes
@@ -203,8 +227,13 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const gotoNext = async (): Promise<boolean> => {
     while (frontier.length > 0) {
       const u = frontier.shift()!;
-      queued.delete(normalizeUrl(u));
-      if (visited.has(normalizeUrl(u))) continue;
+      const n = normalizeUrl(u);
+      queued.delete(n);
+      if (visited.has(n)) continue;
+      // Mark the *requested* URL visited, not just wherever we land: a link
+      // that redirects elsewhere (or fails to load) would otherwise be
+      // re-enqueued and re-attempted forever, and the frontier never drains.
+      visited.add(n);
       await gotoUrl(u);
       return true;
     }
@@ -241,12 +270,22 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     }
   };
   let wasAuthenticated = false;
+  // Consecutive re-login attempts that never leave the login page mean the
+  // script/credentials are broken — retrying up to maxActions times would burn
+  // the whole budget against the auth endpoint (and can lock the account).
+  let loginAttempts = 0;
+  const MAX_LOGIN_ATTEMPTS = 3;
   const doLogin = async (): Promise<void> => {
     if (!cfg.auth.loginScript) return;
     const ls = { ...cfg.auth.loginScript, url: new URL(cfg.auth.loginScript.url, cfg.target).toString() };
     logger.step('Logging in via login script…');
     await performScriptedLogin(page, ls, navTimeout).catch(() => {});
   };
+
+  // Signals fired during login/initial load (startup console errors, 404s for
+  // assets) must carry the target URL, or they dedup-split from the identical
+  // signals recorded once the loop sets a real context.
+  recorder.setContext(0, cfg.target);
 
   if (cfg.auth.loginScript) await doLogin();
 
@@ -271,6 +310,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   let sinceNew = 0;
   let recordsCreated = 0;
   let stopReason = 'budget exhausted';
+  let internalError = false;
 
   // Graceful shutdown: on SIGINT/SIGTERM (CI cancel/timeout) flip a flag and let
   // the loop break cleanly so the report still flushes with partial findings.
@@ -299,14 +339,20 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       stopReason = 'live billing mode detected (refusing to continue)';
       break;
     }
-    if (page.isClosed()) {
+    if (pageCrashed || page.isClosed()) {
+      // On a real crash the signal listener already recorded it (with URL
+      // context); only an unexpected close needs its own signal.
+      if (!pageCrashed) {
+        recorder.add('crash', `page closed unexpectedly on ${lastUrl}`, { severity: 'critical', url: lastUrl });
+      }
+      pageCrashed = false;
       crashCount += 1;
-      recorder.add('crash', `renderer crashed on ${lastUrl}`, { severity: 'critical', url: lastUrl });
       if (crashCount > MAX_CRASHES) {
         stopReason = `too many renderer crashes (${crashCount})`;
         break;
       }
       crashedUrls.add(normalizeUrl(lastUrl)); // don't revisit the page that crashed
+      await page.close().catch(() => {});
       page = await setupPage();
       depth = 0;
       sinceNew = 0;
@@ -340,6 +386,16 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         });
       }
       if (cfg.auth.loginScript) {
+        loginAttempts += 1;
+        if (loginAttempts > MAX_LOGIN_ATTEMPTS) {
+          recorder.add(
+            'session-lost',
+            `login script failed to authenticate after ${MAX_LOGIN_ATTEMPTS} attempts — check credentials/selectors`,
+            { severity: 'high' },
+          );
+          stopReason = 'login script could not authenticate';
+          break;
+        }
         await doLogin();
         await gotoUrl(cfg.target);
         depth = 0;
@@ -350,7 +406,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         break;
       }
     }
-    if (authConfigured && !isLoginPage(url)) wasAuthenticated = true;
+    if (authConfigured && !isLoginPage(url)) {
+      wasAuthenticated = true;
+      loginAttempts = 0;
+    }
 
     const nUrl = normalizeUrl(url);
     lastUrl = url;
@@ -388,6 +447,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         break;
       }
       depth = 0;
+      sinceNew = 0;
       continue;
     }
 
@@ -488,6 +548,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   } catch (err) {
     // An unexpected internal error must not lose the partial report.
     stopReason = `internal error: ${(err as Error).message}`;
+    internalError = true;
     recorder.add('driver', `run loop error: ${(err as Error).message}`, { severity: 'medium' });
   } finally {
     process.removeListener('SIGINT', onSignal);
@@ -516,7 +577,11 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   for (const f of findings) findingsBySeverity[f.severity] += 1;
 
   const failThreshold = SEVERITY_ORDER[cfg.failOn];
-  const exitCode = findings.some((f) => SEVERITY_ORDER[f.severity] >= failThreshold) ? 1 : 0;
+  // A run truncated by an internal error must not read as a clean pass (exit 0
+  // hid real truncations behind a green build); findings above the threshold
+  // still win — "bugs found" carries more information than "tool errored".
+  const failed = findings.some((f) => SEVERITY_ORDER[f.severity] >= failThreshold);
+  const exitCode = failed ? EXIT.FINDINGS : internalError ? EXIT.ERROR : EXIT.CLEAN;
 
   // Redacted snapshot of the resolved config for faithful cross-machine replay.
   const resolvedConfig = JSON.parse(JSON.stringify(cfg)) as {

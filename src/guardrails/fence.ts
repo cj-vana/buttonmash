@@ -71,7 +71,7 @@ export function attachPageFence(page: Page, opts: FenceOptions, recorder: Signal
     if (frame !== page.mainFrame()) return;
     const o = safeOrigin(frame.url());
     if (o !== '' && !allowed.has(o)) {
-      recorder.add('custom', `recovered off-origin navigation → ${frame.url()}`, { severity: 'low' });
+      recorder.add('guardrail', `recovered off-origin navigation → ${frame.url()}`, { severity: 'low' });
       await page.goBack().catch(() => {});
     }
   });
@@ -89,7 +89,7 @@ export async function installContextFence(
   context.on('page', (p) => {
     const u = p.url();
     if (u && u !== 'about:blank' && !allowed.has(safeOrigin(u))) {
-      recorder.add('custom', `closed popup/new-tab → ${u}`, { severity: 'info' });
+      recorder.add('guardrail', `closed popup/new-tab → ${u}`, { severity: 'info' });
       void p.close().catch(() => {});
     }
   });

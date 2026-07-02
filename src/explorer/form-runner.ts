@@ -9,6 +9,7 @@ import { withDeadline } from '../core/async';
 import { normalizeUrl } from '../core/hash';
 import type { FieldDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
+import { addCanary } from '../detectors/page-checks';
 import type { ActionContext } from './actions';
 import { locate } from './discover';
 import { valueForField } from './field-values';
@@ -58,7 +59,7 @@ async function fillField(ctx: ActionContext, field: FieldDescriptor, attempt: nu
       default:
         await loc.fill(v.value.slice(0, 2000), { timeout: t });
     }
-    if (v.canary) ctx.state.pendingCanaries.add(v.canary);
+    if (v.canary) addCanary(ctx.state, v.canary);
     return true;
   } catch {
     return false;
@@ -97,7 +98,7 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
 
   const unsafe = formIsUnsafe(form, cfg);
   if (unsafe) {
-    ctx.recorder.add('custom', `skipped form (${unsafe}): ${form.submit?.name || form.formKey}`, {
+    ctx.recorder.add('guardrail', `skipped form (${unsafe}): ${form.submit?.name || form.formKey}`, {
       severity: 'info',
     });
     result.abandoned = true;

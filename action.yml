@@ -31,6 +31,16 @@ inputs:
     description: 'Upload the buttonmash-report/ directory as a build artifact.'
     required: false
     default: 'true'
+outputs:
+  exit-code:
+    description: 'buttonmash exit code (0 clean, 1 findings, 2 tool error).'
+    value: ${{ steps.run.outputs.exit-code }}
+  findings:
+    description: 'Total number of findings.'
+    value: ${{ steps.run.outputs.findings }}
+  report-path:
+    description: 'Path to the report directory.'
+    value: ${{ steps.run.outputs.report-path }}
 runs:
   using: 'composite'
   steps:
@@ -39,22 +49,44 @@ runs:
         node-version: ${{ inputs.node-version }}
     - id: install
       shell: bash
+      env:
+        BM_VERSION: ${{ inputs.version }}
+        BM_BROWSER: ${{ inputs.browser }}
       run: |
         DIR="${RUNNER_TEMP:-/tmp}/buttonmash"
         mkdir -p "$DIR" && cd "$DIR"
         npm init -y >/dev/null 2>&1
-        npm i "buttonmash@${{ inputs.version }}" >/dev/null
+        npm i "buttonmash@${BM_VERSION}" >/dev/null
         # Install the browser matching buttonmash's bundled Playwright version.
-        npx playwright install --with-deps "${{ inputs.browser }}"
+        npx playwright install --with-deps "${BM_BROWSER}"
         echo "dir=$DIR" >> "$GITHUB_OUTPUT"
-    - shell: bash
-      working-directory: ${{ steps.install.outputs.dir }}
-      run: >
-        npx buttonmash run "${{ inputs.target }}"
-        --browser "${{ inputs.browser }}"
-        --fail-on "${{ inputs.fail-on }}"
-        --out "$GITHUB_WORKSPACE/buttonmash-report"
-        ${{ inputs.args }}
+    - id: run
+      shell: bash
+      # Run from the workspace so a committed buttonmash.config.* is discovered
+      # and repo-relative --config paths resolve. Inputs go through env, never
+      # interpolated into the script — ${{ }} expands before bash sees the
+      # text, so a crafted `target` would otherwise execute on the runner.
+      working-directory: ${{ github.workspace }}
+      env:
+        BM_DIR: ${{ steps.install.outputs.dir }}
+        BM_TARGET: ${{ inputs.target }}
+        BM_BROWSER: ${{ inputs.browser }}
+        BM_FAIL_ON: ${{ inputs.fail-on }}
+        BM_ARGS: ${{ inputs.args }}
+      run: |
+        set +e
+        # shellcheck disable=SC2086  # BM_ARGS is intentionally word-split
+        "$BM_DIR/node_modules/.bin/buttonmash" run "$BM_TARGET" \
+          --browser "$BM_BROWSER" \
+          --fail-on "$BM_FAIL_ON" \
+          --out "$GITHUB_WORKSPACE/buttonmash-report" \
+          $BM_ARGS
+        CODE=$?
+        echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
+        echo "report-path=$GITHUB_WORKSPACE/buttonmash-report" >> "$GITHUB_OUTPUT"
+        FINDINGS=$(node -p "try{require(process.env.GITHUB_WORKSPACE+'/buttonmash-report/results.json').findings.length}catch{''}" 2>/dev/null || echo '')
+        echo "findings=$FINDINGS" >> "$GITHUB_OUTPUT"
+        exit $CODE
     - if: ${{ always() && inputs.upload-report == 'true' }}
       uses: actions/upload-artifact@v5
       with:

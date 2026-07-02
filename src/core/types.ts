@@ -88,6 +88,10 @@ export interface FieldDescriptor {
     | 'email'
     | 'number'
     | 'date'
+    | 'datetime-local'
+    | 'month'
+    | 'week'
+    | 'time'
     | 'tel'
     | 'url'
     | 'password'
@@ -174,6 +178,7 @@ export type SignalKind =
   | 'billing-live'
   | 'form-validation'
   | 'session-lost'
+  | 'guardrail'
   | 'custom'
   | 'driver';
 

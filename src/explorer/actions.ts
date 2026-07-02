@@ -13,7 +13,7 @@ import type { Rng } from '../core/rng';
 import type { ActionKind, ElementDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
 import type { SignalRecorder } from '../detectors/recorder';
-import type { DetectorState } from '../detectors/page-checks';
+import { addCanary, type DetectorState } from '../detectors/page-checks';
 import { locate } from './discover';
 import { fillAndSubmit, formIsUnsafe } from './form-runner';
 import { FUZZ_KEYS, fuzzValue } from './fuzz';
@@ -121,7 +121,7 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
     if (!plan.form) return { kind: 'scroll' };
     const unsafe = formIsUnsafe(plan.form, cfg);
     if (unsafe) {
-      recorder.add('custom', `skipped form (${unsafe}): ${plan.form.submit?.name || plan.form.formKey}`, {
+      recorder.add('guardrail', `skipped form (${unsafe}): ${plan.form.submit?.name || plan.form.formKey}`, {
         severity: 'info',
       });
       return { kind: 'scroll' };
@@ -132,7 +132,7 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
   if (el && cfg.guardrails.destructive.enabled && !cfg.guardrails.destructive.allow) {
     const c = classifyControl(el, cfg.guardrails.destructive.extraVerbs);
     if (c.block && MUTATING.has(kind)) {
-      recorder.add('custom', `skipped destructive control (${c.reason}): ${el.name || el.selector}`, {
+      recorder.add('guardrail', `skipped destructive control (${c.reason}): ${el.name || el.selector}`, {
         severity: 'info',
       });
       return { kind: 'hover', el };
@@ -141,7 +141,11 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
 
   if (cfg.guardrails.dryRun && MUTATING.has(kind)) {
     // In read-only mode, only allow navigating same-origin GET links via click.
-    const isNavLink = kind === 'click' && el?.tag === 'a' && !!el.href;
+    // The href must be a real navigation: `javascript:doThing()` / `#` /
+    // `mailto:` anchors run script or side-effects, not a GET.
+    const href = el?.href?.trim() ?? '';
+    const isNavLink =
+      kind === 'click' && el?.tag === 'a' && !!href && !/^(?:javascript:|#|mailto:|tel:)/i.test(href);
     if (!isNavLink) return el ? { kind: 'hover', el } : { kind: 'scroll' };
   }
 
@@ -194,7 +198,7 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
           if (loc) {
             const fv = fuzzValue(rng, ctx.runId, ctx.step);
             result.value = fv.value.length > 60 ? `${fv.value.slice(0, 57)}…` : fv.value;
-            if (fv.probe) ctx.state.pendingCanaries.add(fv.canary);
+            if (fv.probe) addCanary(ctx.state, fv.canary);
             if (plan.el?.editable) {
               await loc.click({ timeout: opTimeout }).catch(() => {});
               await loc.pressSequentially(fv.value.slice(0, 2000), { timeout: opTimeout });

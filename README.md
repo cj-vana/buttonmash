@@ -288,7 +288,9 @@ buttonmash is built to break things without breaking *you*:
 
 Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 (for CI test rendering), a self-contained `report.html`, and `results.sarif`
-(for GitHub code-scanning). Exit codes follow the pytest/ESLint convention:
+(for GitHub code-scanning). On GitHub Actions it additionally emits inline
+`::error` annotations for the top findings and a markdown job summary — no
+setup needed. Exit codes follow the pytest/ESLint convention:
 
 | Code | Meaning |
 |---|---|
@@ -334,10 +336,12 @@ launch (Playwright) → auth (storageState) → fence (origin/dialogs/popups)
 
 ## Limitations
 
-- Doesn't pierce shadow DOM or cross-origin iframes (payment iframes are
-  intentionally left alone).
+- Reaches open shadow roots and same-origin iframes, but not **closed** shadow
+  roots or **cross-origin** iframes (payment iframes are intentionally left
+  alone).
 - Pure random/coverage exploration can under-explore deep multi-step flows.
-- Heuristic destructive detection is English-leaning + a few languages; extend
+- Heuristic destructive detection covers English, Spanish, German, French,
+  Japanese, Chinese, Korean, Russian, and Arabic verbs; extend
   `destructive.extraVerbs` for your UI. **Sandbox + test mode is the real safety
   net.**
 

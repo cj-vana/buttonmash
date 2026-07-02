@@ -39,7 +39,7 @@ a{color:#58a6ff}
 const CLIENT = `
 const data = JSON.parse(document.getElementById('data').textContent);
 const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e;};
-const esc = s => String(s).replace(/[&<>]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[m]));
+const esc = s => String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const app = document.getElementById('app');
 const r = data;
 const sevs = ['critical','high','medium','low','info'];

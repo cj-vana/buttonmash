@@ -45,7 +45,6 @@ interface RunOpts {
 function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
   const ov: Partial<Config> = {};
   if (url) ov.target = url;
-  if (o.route?.length) ov.routes = o.route;
   if (o.seed) ov.seed = o.seed;
   if (o.browser) ov.browser = o.browser;
   if (o.headed) ov.headless = false;
@@ -71,21 +70,21 @@ function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
 
   const guardrails: NonNullable<Config['guardrails']> = {};
   if (o.dryRun) guardrails.dryRun = true;
-  if (o.allowOrigin?.length) guardrails.allowedOrigins = o.allowOrigin;
   if (o.billing) guardrails.billing = { mode: o.billing };
   if (Object.keys(guardrails).length) ov.guardrails = guardrails;
 
   return ov;
 }
 
-function printSummary(result: RunResult, outDir: string): void {
+function printSummary(result: RunResult, outDir: string, htmlReport: boolean): void {
   const f = result.stats.findingsBySeverity;
-  const pass = result.run.exitCode === EXIT.CLEAN;
   console.log('');
   console.log(
-    pass
+    result.run.exitCode === EXIT.CLEAN
       ? pc.green(pc.bold('✓ PASSED')) + pc.dim(' — nothing broke above the fail threshold')
-      : pc.red(pc.bold('✗ FAILED')) + pc.dim(` — findings ≥ ${result.config.failOn}`),
+      : result.run.exitCode === EXIT.ERROR
+        ? pc.yellow(pc.bold('⚠ ERROR')) + pc.dim(' — the run was truncated by an internal error (partial results)')
+        : pc.red(pc.bold('✗ FAILED')) + pc.dim(` — findings ≥ ${result.config.failOn}`),
   );
   console.log(
     `  ${result.stats.actionsTaken} actions · ${result.stats.pagesVisited} pages · ${result.stats.statesDiscovered} states · ${(result.run.durationMs / 1000).toFixed(1)}s`,
@@ -94,7 +93,7 @@ function printSummary(result: RunResult, outDir: string): void {
     .filter((s) => f[s] > 0)
     .map((s) => `${f[s]} ${s}`);
   console.log(`  ${result.findings.length} findings${parts.length ? ': ' + parts.join(' · ') : ''}`);
-  console.log(pc.dim(`  Report: ${resolve(outDir, 'report.html')}`));
+  if (htmlReport) console.log(pc.dim(`  Report: ${resolve(outDir, 'report.html')}`));
   console.log(pc.dim(`  Reproduce: buttonmash run ${result.run.target} --seed ${result.config.seed}`));
 }
 
@@ -106,11 +105,14 @@ async function doRun(url: string | undefined, opts: RunOpts, loadOpts: LoadOptio
     const cfg = await loadConfig({
       configPath: opts.config,
       overrides: buildOverrides(url, opts),
+      // --route/--allow-origin are documented as *additional* — append to the
+      // config file's lists rather than replacing them.
+      append: { routes: opts.route, allowedOrigins: opts.allowOrigin },
       ...loadOpts,
     });
     const { result, outDir } = await runButtonmash(cfg);
     await writeReports(result, outDir, cfg);
-    printSummary(result, outDir);
+    printSummary(result, outDir, cfg.report.formats.includes('html'));
     process.exit(result.run.exitCode);
   } catch (err) {
     const message = (err as Error).message ?? String(err);
@@ -158,6 +160,11 @@ program
   .action((seedOrResults: string, url: string | undefined, opts: RunOpts) => {
     let seed = seedOrResults;
     let target = url;
+    if (seedOrResults.endsWith('.json') && !existsSync(seedOrResults)) {
+      // A mistyped path must not silently become a fuzz run seeded with it.
+      logger.error(`Results file not found: ${seedOrResults}`);
+      process.exit(EXIT.ERROR);
+    }
     if (seedOrResults.endsWith('.json') && existsSync(seedOrResults)) {
       try {
         const prev = JSON.parse(readFileSync(seedOrResults, 'utf8')) as RunResult;

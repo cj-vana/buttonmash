@@ -52,4 +52,37 @@ describe('hash', () => {
     const b = findingDedupKey('js-error', 'https://x.test/p', 'Error at app.js:288:91');
     expect(a).toBe(b);
   });
+
+  it('findingDedupKey collapses stack URLs that differ only by SPA hash state', () => {
+    const stack = (frag: string) =>
+      `intentional error\nError: intentional error\n    at boom (https://x.test/${frag}:110:15)`;
+    const a = findingDedupKey('js-error', 'https://x.test/', stack(''));
+    const b = findingDedupKey('js-error', 'https://x.test/#shadow-clicked', stack('#shadow-clicked'));
+    expect(a).toBe(b);
+  });
+
+  it('findingDedupKey collapses stack URLs that differ only by cache-buster query', () => {
+    const a = findingDedupKey('js-error', 'https://x.test/', 'at fn (https://cdn.test/app.js?v=111:1:2)');
+    const b = findingDedupKey('js-error', 'https://x.test/', 'at fn (https://cdn.test/app.js?v=222:3:4)');
+    expect(a).toBe(b);
+  });
+
+  it('findingDedupKey keeps genuinely different resources distinct', () => {
+    const a = findingDedupKey('http-4xx', 'https://x.test/', '404 https://x.test/a.png');
+    const b = findingDedupKey('http-4xx', 'https://x.test/', '404 https://x.test/b.png');
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('normalizeUrl param precision', () => {
+  it('keeps whole params that merely start with a volatile name', () => {
+    expect(normalizeUrl('https://x.test/items?view=list')).toBe('https://x.test/items?view=list');
+    expect(normalizeUrl('https://x.test/items?version=2')).toBe('https://x.test/items?version=2');
+    expect(normalizeUrl('https://x.test/items?side=left')).toBe('https://x.test/items?side=left');
+  });
+
+  it('still strips exact volatile params and prefix families', () => {
+    expect(normalizeUrl('https://x.test/p?v=123&utm_campaign=x&_t=9&a=1')).toBe('https://x.test/p?a=1');
+    expect(normalizeUrl('https://x.test/p?session=abc&token=zzz')).toBe('https://x.test/p');
+  });
 });

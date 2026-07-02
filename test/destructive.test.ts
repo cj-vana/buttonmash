@@ -46,3 +46,30 @@ describe('destructive classifier', () => {
     expect(normalizeName('  Élïmïnär! ')).toBe('eliminar');
   });
 });
+
+describe('verb matching precision', () => {
+  it('blocks non-Latin destructive verbs (used to normalize to empty)', () => {
+    expect(classifyControl(el({ name: '削除' })).block).toBe(true); // ja: delete
+    expect(classifyControl(el({ name: 'Удалить файл' })).block).toBe(true); // ru: delete
+    expect(classifyControl(el({ name: 'حذف' })).block).toBe(true); // ar: delete
+    expect(classifyControl(el({ name: '로그아웃' })).block).toBe(true); // ko: logout
+    expect(classifyControl(el({ name: '删除项目' })).block).toBe(true); // zh: delete item
+  });
+
+  it('does not block benign names containing a verb as a substring', () => {
+    expect(classifyControl(el({ name: 'Banner settings' })).block).toBe(false); // not "ban"
+    expect(classifyControl(el({ name: 'Urban planning' })).block).toBe(false); // not "ban"
+    expect(classifyControl(el({ name: 'Buyer profile' })).block).toBe(false); // not "buy"
+    expect(classifyControl(el({ name: 'PayPal login' })).block).toBe(false); // not "pay"
+  });
+
+  it('still blocks common inflections of longer verbs', () => {
+    expect(classifyControl(el({ name: 'Removes item' })).block).toBe(true);
+    expect(classifyControl(el({ name: 'Archived' })).block).toBe(true);
+    expect(classifyControl(el({ name: 'Deletes everything' })).block).toBe(true);
+  });
+
+  it('accepts non-Latin extraVerbs', () => {
+    expect(classifyControl(el({ name: '送信する' }), ['送信']).block).toBe(true);
+  });
+});

@@ -65,19 +65,52 @@ export const DESTRUCTIVE_VERBS: string[] = [
   'se deconnecter',
   'annuler l abonnement',
   'desactiver',
+  // Japanese
+  '削除',
+  '消去',
+  '支払',
+  '購入',
+  '解約',
+  'ログアウト',
+  '退会',
+  // Chinese (simplified)
+  '删除',
+  '支付',
+  '购买',
+  '注销',
+  '退出登录',
+  // Korean
+  '삭제',
+  '결제',
+  '구매',
+  '로그아웃',
+  '탈퇴',
+  // Russian
+  'удалить',
+  'оплатить',
+  'купить',
+  'выйти',
+  'отписаться',
+  // Arabic
+  'حذف',
+  'دفع',
+  'شراء',
+  'تسجيل الخروج',
 ];
 
 /** Paths that are hard-blocked even on an allowed origin. */
 export const DANGEROUS_PATH_RE =
   /(log[-_]?out|sign[-_]?out|\/logout|\/signout|auth\/logout|account\/(?:close|delete|deactivate)|billing\/cancel|subscription\/cancel|\/delete(?:\b|\/)|\/destroy\b)/i;
 
-/** Normalize text for verb matching: lowercase, strip accents/punctuation. */
+/** Normalize text for verb matching: lowercase, strip accents/punctuation.
+ *  Keeps non-Latin letters — `削除`/`Удалить`/`حذف` used to normalize to ''
+ *  and slip past the verb denylist entirely. */
 export function normalizeName(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFKD')
     .replace(/[̀-ͯ]/g, '') // strip combining diacritics
-    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/[^\p{L}\p{N} ]/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -86,6 +119,20 @@ export interface Classification {
   block: boolean;
   /** Why it was blocked (or 'none'). */
   reason: string;
+}
+
+const CJK_RE = /[぀-ヿ㐀-鿿가-힯]/;
+
+/** Whole-word verb matching: `Banner` must not trip `ban`, `Buyer` `buy`,
+ *  `PayPal login` `pay` — substring matching silently downgraded benign
+ *  controls to hover and eroded coverage. Verbs ≥4 chars also match as a
+ *  token prefix so common inflections (`removes`, `archived`) stay covered;
+ *  CJK verbs match as substrings since those scripts don't space-delimit. */
+export function verbMatches(name: string, verb: string): boolean {
+  if (!verb) return false;
+  if (CJK_RE.test(verb)) return name.includes(verb);
+  if (verb.includes(' ')) return ` ${name} `.includes(` ${verb} `);
+  return name.split(' ').some((t) => (verb.length >= 4 ? t.startsWith(verb) : t === verb));
 }
 
 /**
@@ -97,10 +144,10 @@ export function classifyControl(
   el: ElementDescriptor,
   extraVerbs: readonly string[] = [],
 ): Classification {
-  const verbs = [...DESTRUCTIVE_VERBS, ...extraVerbs.map((v) => normalizeName(v))];
+  const verbs = [...DESTRUCTIVE_VERBS, ...extraVerbs].map((v) => normalizeName(v));
   const name = normalizeName(el.name);
 
-  const verbHit = name ? verbs.find((v) => name.includes(normalizeName(v))) : undefined;
+  const verbHit = name ? verbs.find((v) => verbMatches(name, v)) : undefined;
   if (verbHit) return { block: true, reason: `verb:${verbHit}` };
 
   const href = el.href ?? '';

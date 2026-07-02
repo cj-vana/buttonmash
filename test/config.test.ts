@@ -105,3 +105,38 @@ describe('loadConfig', () => {
     ).rejects.toBeInstanceOf(ConfigError);
   });
 });
+
+describe('additive CLI lists and credential hygiene', () => {
+  it('append.allowedOrigins adds to (not replaces) configured origins', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://a.example.com',
+        guardrails: { allowedOrigins: ['https://api.example.com'] },
+      },
+      append: { allowedOrigins: ['https://cdn.example.com'] },
+    });
+    expect(cfg.guardrails.allowedOrigins).toContain('https://api.example.com');
+    expect(cfg.guardrails.allowedOrigins).toContain('https://cdn.example.com');
+    expect(cfg.guardrails.allowedOrigins).toContain('https://a.example.com');
+  });
+
+  it('append.routes adds to configured routes', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: 'https://a.example.com', routes: ['/one'] },
+      append: { routes: ['/two'] },
+    });
+    expect(cfg.routes).toContain('https://a.example.com/one');
+    expect(cfg.routes).toContain('https://a.example.com/two');
+  });
+
+  it('moves credentials in the target URL into basicAuth and strips them', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: 'https://admin:hunter2@staging.example.com/app' },
+    });
+    expect(cfg.target).toBe('https://staging.example.com/app');
+    expect(cfg.auth.basicAuth).toEqual({ username: 'admin', password: 'hunter2' });
+  });
+});

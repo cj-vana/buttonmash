@@ -17,16 +17,20 @@ export interface BillingPattern {
 }
 
 /** Presence of any of these ⇒ live payment mode ⇒ refuse to touch payment UI. */
+// No upper bound on key length: with `{10,99}` a key whose alphanumeric tail
+// exceeded 99 chars matched NOTHING (the trailing \b can only sit at the key's
+// true end), silently bypassing live-mode refusal. Stripe documents that key
+// length may change.
 export const LIVE_MODE_PATTERNS: BillingPattern[] = [
-  { id: 'stripe-pk-live', re: /\bpk_live_[a-zA-Z0-9]{10,99}\b/ },
-  { id: 'stripe-sk-live', re: /\bsk_live_[a-zA-Z0-9]{10,99}\b/ },
-  { id: 'stripe-rk-live', re: /\brk_live_[a-zA-Z0-9]{10,99}\b/ },
+  { id: 'stripe-pk-live', re: /\bpk_live_[a-zA-Z0-9]{10,}\b/ },
+  { id: 'stripe-sk-live', re: /\bsk_live_[a-zA-Z0-9]{10,}\b/ },
+  { id: 'stripe-rk-live', re: /\brk_live_[a-zA-Z0-9]{10,}\b/ },
   { id: 'braintree-production', re: /\bproduction_[a-z0-9]{8,}_[a-z0-9]{8,}\b/ },
 ];
 
 /** Presence of these is reassuring (test mode) but not conclusive on its own. */
 export const TEST_MODE_PATTERNS: BillingPattern[] = [
-  { id: 'stripe-pk-test', re: /\bpk_test_[a-zA-Z0-9]{10,99}\b/ },
+  { id: 'stripe-pk-test', re: /\bpk_test_[a-zA-Z0-9]{10,}\b/ },
   { id: 'braintree-sandbox', re: /\bsandbox_[a-z0-9]{8,}_[a-z0-9]{8,}\b/ },
 ];
 
