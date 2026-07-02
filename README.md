@@ -141,6 +141,11 @@ Controls:
 
 Dangerous paths (logout/delete/cancel) and off-origin URLs are never enqueued.
 
+Hash-router SPAs are first-class: `#/route` and `#!/route` fragments count as
+distinct pages in the frontier and stats (plain `#anchor` fragments don't), and
+path guards like `blockedPathPatterns` apply to the hash route too — a
+`#/account/delete` link is guarded exactly like `/account/delete`.
+
 Discovery also reaches **inside open shadow DOM** (web-component design systems —
 Salesforce LWC, Ionic, Shoelace/Lit/Material Web) and **same-origin iframes**
 (embedded editors, wizards), so component-based apps aren't invisible to it.

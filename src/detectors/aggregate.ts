@@ -46,6 +46,11 @@ const KIND_META: Record<SignalKind, KindMeta> = {
   driver: { category: 'driver-error', defaultSeverity: 'medium', label: 'Driver error' },
 };
 
+/** Network failures are resource-scoped, not page-scoped: the same broken
+ *  asset/endpoint (its URL is in the detail) referenced from ten pages is one
+ *  bug, not ten findings — so these kinds drop the page URL from their key. */
+const RESOURCE_KINDS = new Set<SignalKind>(['http.4xx', 'http.5xx', 'requestfailed', 'broken-image']);
+
 function firstLine(s: string): string {
   const line = s.split('\n')[0]?.trim() ?? '';
   return line.length > 120 ? `${line.slice(0, 117)}…` : line;
@@ -89,7 +94,8 @@ export function aggregateFindings(input: AggregateInput): Finding[] {
     // Fold the exact HTTP status into the key: the signature's digit-stripping
     // would otherwise merge a 401 and a 404 on the same route into one finding.
     const statusTag = typeof sig.meta?.status === 'number' ? `:${sig.meta.status}` : '';
-    const dedupKey = findingDedupKey(meta.category + statusTag, sig.url, sig.detail);
+    const keyUrl = RESOURCE_KINDS.has(sig.kind) ? '' : sig.url;
+    const dedupKey = findingDedupKey(meta.category + statusTag, keyUrl, sig.detail);
     const step = attributeStep(sig, actions);
     const existing = byKey.get(dedupKey);
 

@@ -86,3 +86,31 @@ describe('normalizeUrl param precision', () => {
     expect(normalizeUrl('https://x.test/p?session=abc&token=zzz')).toBe('https://x.test/p');
   });
 });
+
+describe('hash-router routes', () => {
+  it('normalizeUrl keeps #/ and #!/ routes but drops plain anchors', () => {
+    expect(normalizeUrl('https://x.test/app#/items/3')).toBe('https://x.test/app#/items/3');
+    expect(normalizeUrl('https://x.test/app#!/items/3')).toBe('https://x.test/app#!/items/3');
+    expect(normalizeUrl('https://x.test/app#section')).toBe('https://x.test/app');
+  });
+
+  it('distinct hash routes are distinct pages for state coverage', () => {
+    expect(stateFingerprint('https://x.test/#/a', ['f'])).not.toBe(
+      stateFingerprint('https://x.test/#/b', ['f']),
+    );
+  });
+
+  it('routePath folds a hash route into the path for guards', async () => {
+    const { routePath } = await import('../src/core/hash');
+    expect(routePath(new URL('https://x.test/app#/account/delete'))).toBe('/app/account/delete');
+    expect(routePath(new URL('https://x.test/app#top'))).toBe('/app');
+    expect(routePath(new URL('https://x.test/login'))).toBe('/login');
+  });
+
+  it('stack URLs still dedup across hash-route state', () => {
+    const stack = (frag: string) => `boom\n    at fn (https://x.test/${frag}:10:5)`;
+    expect(findingDedupKey('js-error', 'https://x.test/', stack(''))).toBe(
+      findingDedupKey('js-error', 'https://x.test/', stack('#/items/9')),
+    );
+  });
+});

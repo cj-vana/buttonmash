@@ -11,7 +11,7 @@ import type { Browser, Page } from 'playwright';
 
 import type { ResolvedConfig } from '../config/load';
 import { sleep, TimeoutError, withDeadline } from '../core/async';
-import { normalizeUrl, stateFingerprint } from '../core/hash';
+import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
 import { logger } from '../core/logger';
 import { anyMatch, compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
@@ -199,9 +199,12 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     }
     if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
     if (!allowedSet.has(u.origin)) return;
-    if (blockedPathRe?.test(u.pathname)) return;
-    if (excludeRe.length && anyMatch(u.pathname, excludeRe)) return;
-    if (includeRe.length && !anyMatch(u.pathname, includeRe)) return;
+    // routePath folds hash-router routes in, so `#/account/delete` is guarded
+    // exactly like `/account/delete`.
+    const p = routePath(u);
+    if (blockedPathRe?.test(p)) return;
+    if (excludeRe.length && anyMatch(p, excludeRe)) return;
+    if (includeRe.length && !anyMatch(p, includeRe)) return;
     const n = normalizeUrl(raw);
     if (visited.has(n) || queued.has(n) || crashedUrls.has(n) || frontier.length >= FRONTIER_CAP) return;
     queued.add(n);
@@ -264,7 +267,8 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const loginRe = new RegExp(cfg.auth.loginUrlPattern, 'i');
   const isLoginPage = (u: string): boolean => {
     try {
-      return loginRe.test(new URL(u).pathname);
+      // routePath so a hash-routed `#/login` is recognized too.
+      return loginRe.test(routePath(new URL(u)));
     } catch {
       return false;
     }

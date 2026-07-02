@@ -24,10 +24,16 @@ export function fnv1a(str: string): string {
 // normalized identically and were never crawled.
 const VOLATILE_PARAM = /^(?:utm_|_)|^(?:sid|session|sess|token|ts|cb|nonce|csrf|xsrf|v|cache)$/i;
 
+/** True when a fragment is a hash-router route (`#/…` or `#!…`), not a plain
+ *  in-page anchor. */
+const ROUTE_HASH_RE = /^#!?\//;
+
 /**
- * Normalize a URL for state comparison: drop the hash, strip volatile query
- * params (session ids, cache-busters, csrf tokens), and sort the rest. Invalid
- * URLs are returned unchanged.
+ * Normalize a URL for state comparison: drop plain anchors, strip volatile
+ * query params (session ids, cache-busters, csrf tokens), and sort the rest.
+ * Hash-router routes (`#/items/3`) are KEPT — they are real pages; dropping
+ * them collapsed a whole hash-routed SPA into one "page" that the crawler
+ * marked visited after the first route. Invalid URLs are returned unchanged.
  */
 export function normalizeUrl(raw: string): string {
   try {
@@ -36,11 +42,21 @@ export function normalizeUrl(raw: string): string {
       if (VOLATILE_PARAM.test(k)) u.searchParams.delete(k);
     }
     u.searchParams.sort();
+    const hash = ROUTE_HASH_RE.test(u.hash) ? u.hash : '';
     u.hash = '';
-    return u.origin + u.pathname + (u.search || '');
+    return u.origin + u.pathname + (u.search || '') + hash;
   } catch {
     return raw;
   }
+}
+
+/**
+ * The path a URL routes to, for path-based guards (blocked/include/exclude,
+ * login detection): the pathname plus a hash-router route, so `#/account/delete`
+ * is guarded exactly like `/account/delete`.
+ */
+export function routePath(u: URL): string {
+  return u.pathname + (ROUTE_HASH_RE.test(u.hash) ? u.hash.replace(/^#!?/, '') : '');
 }
 
 /**
@@ -84,9 +100,13 @@ export function findingDedupKey(category: string, url: string, signature: string
     // URLs embedded in messages/stack frames carry volatile hash/query state
     // (SPA `#/routes`, cache-busters) — the same error thrown from
     // `app/:24:7` and `app/#detail:24:7` is one bug, not two. Peel the stack
-    // frame's `:line:col` off before parsing: after a fragment it would vanish
-    // with the hash, in a path it would survive — and the variants would split.
-    .replace(/https?:\/\/[^\s)'"]+/gi, (u) => normalizeUrl(u.replace(/:\d+:\d+$/, '')))
+    // frame's `:line:col` off before parsing (after a fragment it would vanish
+    // with the hash, in a path it would survive — and the variants would
+    // split), then drop the whole fragment: these reference scripts/resources,
+    // where a fragment is never part of identity.
+    .replace(/https?:\/\/[^\s)'"]+/gi, (u) =>
+      normalizeUrl(u.replace(/:\d+:\d+$/, '').replace(/#.*$/, '')),
+    )
     .replace(/0x[0-9a-f]+/gi, '0x_')
     .replace(/:\d+:\d+/g, ':_:_')
     .replace(/\b\d{3,}\b/g, '_')
