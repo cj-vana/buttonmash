@@ -362,6 +362,13 @@ npm run typecheck && npm run lint
 The `examples/buggy-app/` is a deliberately broken page used to dogfood the tool
 in CI.
 
+## Related
+
+[unslop-ci](https://github.com/cj-vana/unslop-ci) is buttonmash's sibling: a
+diff-aware CI gate that scans only the lines a PR adds for the tells that make
+code, prose, and UI read as AI-generated. buttonmash tests what the running
+app does; unslop-ci gates what the diff says.
+
 ## License
 
 [MIT](./LICENSE) © cj-vana
