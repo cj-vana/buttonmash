@@ -46,7 +46,14 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      - name: Test with coverage gates
+        if: ${{ matrix.node-version == 20 }}
+        run: npm run test:coverage
+        env:
+          CI: 'true'
+
       - name: Test
+        if: ${{ matrix.node-version != 20 }}
         run: npm test
         env:
           CI: 'true'

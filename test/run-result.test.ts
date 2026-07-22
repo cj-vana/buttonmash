@@ -50,6 +50,14 @@ function input(overrides: Partial<FinalizeRunInput> = {}): FinalizeRunInput {
 }
 
 describe('run result finalization', () => {
+  it('returns a clean exit for a completed run with no failing findings', () => {
+    const result = finalizeRun(input());
+
+    expect(result.run.complete).toBe(true);
+    expect(result.run.exitCode).toBe(EXIT.CLEAN);
+    expect(result.findings).toHaveLength(0);
+  });
+
   it('aggregates findings, attaches traces, and redacts config without mutating it', () => {
     const signal: Signal = {
       kind: 'pageerror',
