@@ -61,3 +61,52 @@ jobs:
             coverage/
           if-no-files-found: ignore
           retention-days: 7
+
+  action-smoke:
+    name: composite action smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Pack the local release artifact
+        id: package
+        run: echo "path=$GITHUB_WORKSPACE/$(npm pack --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Start smoke target
+        run: |
+          node test/fixtures/action-server.mjs &
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173 >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run the local composite action
+        id: buttonmash
+        uses: ./
+        with:
+          target: http://127.0.0.1:4173
+          version: file:${{ steps.package.outputs.path }}
+          args: --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
+          upload-report: 'false'
+
+      - name: Verify action outputs
+        env:
+          EXIT_CODE: ${{ steps.buttonmash.outputs.exit-code }}
+          FINDINGS: ${{ steps.buttonmash.outputs.findings }}
+          REPORT_PATH: ${{ steps.buttonmash.outputs.report-path }}
+        run: |
+          test "$EXIT_CODE" = "0"
+          test "$FINDINGS" = "0"
+          test -f "$REPORT_PATH/results.json"
