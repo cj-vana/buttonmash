@@ -84,9 +84,10 @@ function deepMerge<T>(base: T, over: Partial<T> | undefined): T {
   const out: Record<string, unknown> = { ...base };
   for (const [k, v] of Object.entries(over)) {
     if (v === undefined) continue;
-    out[k] = isPlainObject(v) && isPlainObject(out[k])
-      ? deepMerge(out[k], v as Record<string, unknown>)
-      : v;
+    out[k] =
+      isPlainObject(v) && isPlainObject(out[k])
+        ? deepMerge(out[k], v as Record<string, unknown>)
+        : v;
   }
   return out as T;
 }
@@ -186,7 +187,9 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
       tu.username = '';
       tu.password = '';
       target = tu.toString();
-      logger.warn('Credentials in the target URL were moved to auth.basicAuth and stripped from reports.');
+      logger.warn(
+        'Credentials in the target URL were moved to auth.basicAuth and stripped from reports.',
+      );
     }
     origin = tu.origin;
   } catch {

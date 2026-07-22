@@ -27,7 +27,12 @@ export default defineConfig({
     ignoreHttpStatuses: [401, 403],
     ignorePatterns: ['ResizeObserver loop', 'favicon'],
     custom: [
-      { name: 'react-error-boundary', pattern: 'Error boundary', severity: 'high', target: 'console' },
+      {
+        name: 'react-error-boundary',
+        pattern: 'Error boundary',
+        severity: 'high',
+        target: 'console',
+      },
     ],
   },
 

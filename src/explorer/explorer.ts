@@ -24,7 +24,8 @@ export class Explorer {
   /** Pick an un-completed create-surface still under its attempt cap. */
   chooseForm(forms: readonly FormDescriptor[], maxAttempts: number): FormDescriptor | undefined {
     const eligible = forms.filter(
-      (f) => !this.completedForms.has(f.fpKey) && (this.formAttempts.get(f.fpKey) ?? 0) < maxAttempts,
+      (f) =>
+        !this.completedForms.has(f.fpKey) && (this.formAttempts.get(f.fpKey) ?? 0) < maxAttempts,
     );
     if (eligible.length === 0) return undefined;
     const sorted = [...eligible].sort((a, b) => a.fpKey.localeCompare(b.fpKey));

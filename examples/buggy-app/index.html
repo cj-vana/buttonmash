@@ -5,17 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>buttonmash demo — a deliberately buggy app</title>
     <style>
-      body { font: 15px system-ui, sans-serif; margin: 2rem; max-width: 720px; }
-      button, a.btn { display: inline-block; margin: 4px; padding: 8px 12px; }
-      .danger { background: #c0392b; color: white; }
-      fieldset { margin: 1rem 0; }
+      body {
+        font:
+          15px system-ui,
+          sans-serif;
+        margin: 2rem;
+        max-width: 720px;
+      }
+      button,
+      a.btn {
+        display: inline-block;
+        margin: 4px;
+        padding: 8px 12px;
+      }
+      .danger {
+        background: #c0392b;
+        color: white;
+      }
+      fieldset {
+        margin: 1rem 0;
+      }
     </style>
   </head>
   <body>
     <h1>buttonmash demo app 🐒</h1>
     <p>
-      This page intentionally contains bugs so buttonmash has something to find.
-      It is configured in Stripe <strong>test mode</strong> (publishable key
+      This page intentionally contains bugs so buttonmash has something to find. It is configured in
+      Stripe <strong>test mode</strong> (publishable key
       <code>pk_test_51Hxxxxxxxxxxxxxxxxxxxxxx</code>) — never a live key.
     </p>
 
@@ -51,9 +67,28 @@
     <fieldset>
       <legend>Create an item (buttonmash should complete this flow)</legend>
       <button id="new-item" onclick="document.getElementById('item-name').focus()">New Item</button>
-      <form id="item-form" onsubmit="event.preventDefault(); createItem();">
-        <input id="item-name" name="itemName" type="text" required minlength="2" placeholder="Item name" />
-        <input id="item-email" name="contactEmail" type="email" required placeholder="Contact email" />
+      <form
+        id="item-form"
+        onsubmit="
+          event.preventDefault();
+          createItem();
+        "
+      >
+        <input
+          id="item-name"
+          name="itemName"
+          type="text"
+          required
+          minlength="2"
+          placeholder="Item name"
+        />
+        <input
+          id="item-email"
+          name="contactEmail"
+          type="email"
+          required
+          placeholder="Contact email"
+        />
         <select id="item-kind" name="kind" required>
           <option value="">Choose…</option>
           <option value="audio">Audio</option>
@@ -81,11 +116,9 @@
         connectedCallback() {
           const root = this.attachShadow({ mode: 'open' });
           root.innerHTML = '<button id="shadow-btn">Shadow Action</button>';
-          root
-            .querySelector('button')
-            .addEventListener('click', () => {
-              location.hash = '#shadow-clicked';
-            });
+          root.querySelector('button').addEventListener('click', () => {
+            location.hash = '#shadow-clicked';
+          });
         }
       }
       customElements.define('bm-widget', BmWidget);

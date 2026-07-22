@@ -34,7 +34,9 @@ describe('hash', () => {
     // same structure, different visible text → same structural fp (no churn)
     expect(structuralFingerprint({ ...a })).toBe(structuralFingerprint({ ...a }));
     // but a different position is still a different control
-    expect(structuralFingerprint(a)).not.toBe(structuralFingerprint({ ...a, path: 'body:0>span:3' }));
+    expect(structuralFingerprint(a)).not.toBe(
+      structuralFingerprint({ ...a, path: 'body:0>span:3' }),
+    );
     // and elementFingerprint (which DOES include name) differs on text
     expect(elementFingerprint({ ...a, name: '3 minutes ago' })).not.toBe(
       elementFingerprint({ ...a, name: '4 minutes ago' }),
@@ -57,13 +59,25 @@ describe('hash', () => {
     const stack = (frag: string) =>
       `intentional error\nError: intentional error\n    at boom (https://x.test/${frag}:110:15)`;
     const a = findingDedupKey('js-error', 'https://x.test/', stack(''));
-    const b = findingDedupKey('js-error', 'https://x.test/#shadow-clicked', stack('#shadow-clicked'));
+    const b = findingDedupKey(
+      'js-error',
+      'https://x.test/#shadow-clicked',
+      stack('#shadow-clicked'),
+    );
     expect(a).toBe(b);
   });
 
   it('findingDedupKey collapses stack URLs that differ only by cache-buster query', () => {
-    const a = findingDedupKey('js-error', 'https://x.test/', 'at fn (https://cdn.test/app.js?v=111:1:2)');
-    const b = findingDedupKey('js-error', 'https://x.test/', 'at fn (https://cdn.test/app.js?v=222:3:4)');
+    const a = findingDedupKey(
+      'js-error',
+      'https://x.test/',
+      'at fn (https://cdn.test/app.js?v=111:1:2)',
+    );
+    const b = findingDedupKey(
+      'js-error',
+      'https://x.test/',
+      'at fn (https://cdn.test/app.js?v=222:3:4)',
+    );
     expect(a).toBe(b);
   });
 
@@ -82,7 +96,9 @@ describe('normalizeUrl param precision', () => {
   });
 
   it('still strips exact volatile params and prefix families', () => {
-    expect(normalizeUrl('https://x.test/p?v=123&utm_campaign=x&_t=9&a=1')).toBe('https://x.test/p?a=1');
+    expect(normalizeUrl('https://x.test/p?v=123&utm_campaign=x&_t=9&a=1')).toBe(
+      'https://x.test/p?a=1',
+    );
     expect(normalizeUrl('https://x.test/p?session=abc&token=zzz')).toBe('https://x.test/p');
   });
 });

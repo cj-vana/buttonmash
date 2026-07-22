@@ -153,7 +153,8 @@ export function classifyControl(
   const href = el.href ?? '';
   const formAction = el.formAction ?? '';
   if (DANGEROUS_PATH_RE.test(href)) return { block: true, reason: `path:${href}` };
-  if (DANGEROUS_PATH_RE.test(formAction)) return { block: true, reason: `form-action:${formAction}` };
+  if (DANGEROUS_PATH_RE.test(formAction))
+    return { block: true, reason: `form-action:${formAction}` };
 
   const method = (el.formMethod ?? '').toUpperCase();
   if ((method === 'POST' || method === 'DELETE') && DANGEROUS_PATH_RE.test(formAction)) {

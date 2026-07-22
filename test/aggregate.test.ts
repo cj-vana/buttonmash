@@ -67,8 +67,18 @@ describe('http status dedup', () => {
 describe('resource-scoped network dedup', () => {
   it('merges the same failing resource seen from different pages', () => {
     const signals: Signal[] = [
-      sig({ kind: 'http.4xx', detail: '404 http://x.test/api/boom', url: 'http://x.test/#/a', meta: { status: 404 } }),
-      sig({ kind: 'http.4xx', detail: '404 http://x.test/api/boom', url: 'http://x.test/#/b', meta: { status: 404 } }),
+      sig({
+        kind: 'http.4xx',
+        detail: '404 http://x.test/api/boom',
+        url: 'http://x.test/#/a',
+        meta: { status: 404 },
+      }),
+      sig({
+        kind: 'http.4xx',
+        detail: '404 http://x.test/api/boom',
+        url: 'http://x.test/#/b',
+        meta: { status: 404 },
+      }),
     ];
     const findings = aggregateFindings({ signals, actions: [], screenshots: new Map() });
     expect(findings).toHaveLength(1);

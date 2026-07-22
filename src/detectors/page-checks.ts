@@ -68,7 +68,12 @@ function domCheck(): { blank: boolean; brokenImages: string[]; overlay: string |
   // no <img>, no interactive DOM nodes, and must not read as a white screen.
   const media = document.querySelectorAll('canvas,svg,video').length;
   const blank =
-    !!body && text.length < 3 && imgs.length === 0 && interactive === 0 && media === 0 && scrollH < 60;
+    !!body &&
+    text.length < 3 &&
+    imgs.length === 0 &&
+    interactive === 0 &&
+    media === 0 &&
+    scrollH < 60;
 
   // Framework error overlays — error boundaries often don't re-throw to window,
   // so neither pageerror nor blank-screen fires. Match TIGHT signatures only.
@@ -88,7 +93,10 @@ function domCheck(): { blank: boolean; brokenImages: string[]; overlay: string |
       break;
     }
   }
-  if (!overlay && /Application error: a client-side exception|Unexpected Application Error/i.test(text)) {
+  if (
+    !overlay &&
+    /Application error: a client-side exception|Unexpected Application Error/i.test(text)
+  ) {
     overlay = 'framework error message';
   }
   return { blank, brokenImages: Array.from(new Set(broken)).slice(0, 20), overlay };
@@ -179,7 +187,8 @@ export async function runPageChecks(deps: PageCheckDeps, newState: boolean): Pro
   if (deps.customUrl.length) {
     const u = page.url();
     for (const rule of deps.customUrl) {
-      if (rule.re.test(u)) recorder.add('custom', `${rule.name}: ${u}`, { severity: rule.severity });
+      if (rule.re.test(u))
+        recorder.add('custom', `${rule.name}: ${u}`, { severity: rule.severity });
     }
   }
 

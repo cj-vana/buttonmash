@@ -55,11 +55,27 @@ describe('scripted login', () => {
     try {
       const result = await buttonmash({
         target: `${server.url}/app`,
-        auth: { loginScript: { url: '/login', usernameSelector: '#user', passwordSelector: '#pass', submitSelector: '#go', username: 'u', password: 'p', successUrl: '/app' } },
+        auth: {
+          loginScript: {
+            url: '/login',
+            usernameSelector: '#user',
+            passwordSelector: '#pass',
+            submitSelector: '#go',
+            username: 'u',
+            password: 'p',
+            successUrl: '/app',
+          },
+        },
         headless: true,
         logLevel: 'silent',
         budget: { maxActions: 40, maxDurationMs: 30_000, throttleMs: 20 },
-        report: { outDir, formats: ['json'], github: false, captureScreenshots: false, captureTrace: false },
+        report: {
+          outDir,
+          formats: ['json'],
+          github: false,
+          captureScreenshots: false,
+          captureTrace: false,
+        },
       });
       // It logged in and explored the protected app rather than being stuck on
       // /login. (A transient session-lost + re-auth is acceptable behavior — the

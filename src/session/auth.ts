@@ -72,7 +72,11 @@ export async function performScriptedLogin(
   if (ls.successUrl) {
     await page.waitForURL(new RegExp(ls.successUrl), { timeout: timeoutMs }).catch(() => {});
   } else if (ls.successSelector) {
-    await page.locator(ls.successSelector).first().waitFor({ state: 'visible', timeout: timeoutMs }).catch(() => {});
+    await page
+      .locator(ls.successSelector)
+      .first()
+      .waitFor({ state: 'visible', timeout: timeoutMs })
+      .catch(() => {});
   } else {
     await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch(() => {});
   }

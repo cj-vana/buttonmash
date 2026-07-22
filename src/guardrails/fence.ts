@@ -71,7 +71,9 @@ export function attachPageFence(page: Page, opts: FenceOptions, recorder: Signal
     if (frame !== page.mainFrame()) return;
     const o = safeOrigin(frame.url());
     if (o !== '' && !allowed.has(o)) {
-      recorder.add('guardrail', `recovered off-origin navigation → ${frame.url()}`, { severity: 'low' });
+      recorder.add('guardrail', `recovered off-origin navigation → ${frame.url()}`, {
+        severity: 'low',
+      });
       await page.goBack().catch(() => {});
     }
   });

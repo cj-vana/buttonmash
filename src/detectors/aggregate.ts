@@ -4,13 +4,7 @@
  * trace — fixing gremlins.js's habit of over-counting and under-reporting.
  */
 import { findingDedupKey } from '../core/hash';
-import type {
-  Finding,
-  LoggedAction,
-  Severity,
-  Signal,
-  SignalKind,
-} from '../core/types';
+import type { Finding, LoggedAction, Severity, Signal, SignalKind } from '../core/types';
 
 interface KindMeta {
   category: string;
@@ -24,23 +18,47 @@ const KIND_META: Record<SignalKind, KindMeta> = {
   'console.warn': { category: 'console-warning', defaultSeverity: 'low', label: 'console.warn' },
   'http.5xx': { category: 'http-5xx', defaultSeverity: 'high', label: 'Server error (5xx)' },
   'http.4xx': { category: 'http-4xx', defaultSeverity: 'medium', label: 'Client error (4xx)' },
-  requestfailed: { category: 'network', defaultSeverity: 'medium', label: 'Network request failed' },
+  requestfailed: {
+    category: 'network',
+    defaultSeverity: 'medium',
+    label: 'Network request failed',
+  },
   crash: { category: 'crash', defaultSeverity: 'critical', label: 'Renderer crash' },
   dialog: { category: 'dialog', defaultSeverity: 'low', label: 'Native dialog' },
   hang: { category: 'hang', defaultSeverity: 'high', label: 'Unresponsive / hang' },
   'blank-screen': { category: 'blank-screen', defaultSeverity: 'high', label: 'Blank screen' },
   'broken-image': { category: 'broken-image', defaultSeverity: 'low', label: 'Broken image' },
-  'error-overlay': { category: 'error-overlay', defaultSeverity: 'high', label: 'Framework error overlay' },
+  'error-overlay': {
+    category: 'error-overlay',
+    defaultSeverity: 'high',
+    label: 'Framework error overlay',
+  },
   a11y: { category: 'a11y', defaultSeverity: 'medium', label: 'Accessibility violation' },
   'reflected-input': {
     category: 'reflected-input',
     defaultSeverity: 'medium',
     label: 'Reflected input (possible XSS sink)',
   },
-  'secret-leak': { category: 'secret-leak', defaultSeverity: 'high', label: 'Client-exposed secret' },
-  'billing-live': { category: 'billing-live', defaultSeverity: 'critical', label: 'Live billing mode' },
-  'form-validation': { category: 'form-validation', defaultSeverity: 'low', label: 'Form not accepted' },
-  'session-lost': { category: 'session-lost', defaultSeverity: 'high', label: 'Session lost (logged out mid-run)' },
+  'secret-leak': {
+    category: 'secret-leak',
+    defaultSeverity: 'high',
+    label: 'Client-exposed secret',
+  },
+  'billing-live': {
+    category: 'billing-live',
+    defaultSeverity: 'critical',
+    label: 'Live billing mode',
+  },
+  'form-validation': {
+    category: 'form-validation',
+    defaultSeverity: 'low',
+    label: 'Form not accepted',
+  },
+  'session-lost': {
+    category: 'session-lost',
+    defaultSeverity: 'high',
+    label: 'Session lost (logged out mid-run)',
+  },
   guardrail: { category: 'guardrail', defaultSeverity: 'info', label: 'Guardrail' },
   custom: { category: 'custom', defaultSeverity: 'medium', label: 'Custom rule' },
   driver: { category: 'driver-error', defaultSeverity: 'medium', label: 'Driver error' },
@@ -49,7 +67,12 @@ const KIND_META: Record<SignalKind, KindMeta> = {
 /** Network failures are resource-scoped, not page-scoped: the same broken
  *  asset/endpoint (its URL is in the detail) referenced from ten pages is one
  *  bug, not ten findings — so these kinds drop the page URL from their key. */
-const RESOURCE_KINDS = new Set<SignalKind>(['http.4xx', 'http.5xx', 'requestfailed', 'broken-image']);
+const RESOURCE_KINDS = new Set<SignalKind>([
+  'http.4xx',
+  'http.5xx',
+  'requestfailed',
+  'broken-image',
+]);
 
 function firstLine(s: string): string {
   const line = s.split('\n')[0]?.trim() ?? '';

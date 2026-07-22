@@ -11,23 +11,28 @@ import { join } from 'node:path';
 import type { Finding, RunResult } from '../core/types';
 
 export function xmlEscape(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-    // eslint-disable-next-line no-control-regex -- intentionally stripping chars illegal in XML 1.0
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
-    // also strip XML 1.0 noncharacters and unpaired surrogates (reflected app text)
-    .replace(/[￾￿]/g, '')
-    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
-    .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1');
+  return (
+    s
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
+      // eslint-disable-next-line no-control-regex -- intentionally stripping chars illegal in XML 1.0
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '')
+      // also strip XML 1.0 noncharacters and unpaired surrogates (reflected app text)
+      .replace(/[￾￿]/g, '')
+      .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+      .replace(/(^|[^\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '$1')
+  );
 }
 
 function reproText(f: Finding): string {
   const steps = f.reproSteps
-    .map((s) => `  #${s.step} ${s.kind}${s.target ? ` "${s.target}"` : ''}${s.value ? ` = ${s.value}` : ''}`)
+    .map(
+      (s) =>
+        `  #${s.step} ${s.kind}${s.target ? ` "${s.target}"` : ''}${s.value ? ` = ${s.value}` : ''}`,
+    )
     .join('\n');
   return `${f.description}\n\nLocation: ${f.location.url}\nSeen ${f.count}× (first at action #${f.firstSeenStep})\n\nRepro:\n${steps}`;
 }

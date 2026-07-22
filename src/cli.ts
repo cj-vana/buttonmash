@@ -20,7 +20,9 @@ const program = new Command();
 
 program
   .name('buttonmash')
-  .description('A CI chaos monkey for web apps — press every button, mash keys, break things, report.')
+  .description(
+    'A CI chaos monkey for web apps — press every button, mash keys, break things, report.',
+  )
   .version(version, '-v, --version');
 
 interface RunOpts {
@@ -83,7 +85,8 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
     result.run.exitCode === EXIT.CLEAN
       ? pc.green(pc.bold('✓ PASSED')) + pc.dim(' — nothing broke above the fail threshold')
       : result.run.exitCode === EXIT.ERROR
-        ? pc.yellow(pc.bold('⚠ ERROR')) + pc.dim(' — the run was truncated by an internal error (partial results)')
+        ? pc.yellow(pc.bold('⚠ ERROR')) +
+          pc.dim(' — the run was truncated by an internal error (partial results)')
         : pc.red(pc.bold('✗ FAILED')) + pc.dim(` — findings ≥ ${result.config.failOn}`),
   );
   console.log(
@@ -92,12 +95,20 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
   const parts = (['critical', 'high', 'medium', 'low', 'info'] as const)
     .filter((s) => f[s] > 0)
     .map((s) => `${f[s]} ${s}`);
-  console.log(`  ${result.findings.length} findings${parts.length ? ': ' + parts.join(' · ') : ''}`);
+  console.log(
+    `  ${result.findings.length} findings${parts.length ? ': ' + parts.join(' · ') : ''}`,
+  );
   if (htmlReport) console.log(pc.dim(`  Report: ${resolve(outDir, 'report.html')}`));
-  console.log(pc.dim(`  Reproduce: buttonmash run ${result.run.target} --seed ${result.config.seed}`));
+  console.log(
+    pc.dim(`  Reproduce: buttonmash run ${result.run.target} --seed ${result.config.seed}`),
+  );
 }
 
-async function doRun(url: string | undefined, opts: RunOpts, loadOpts: LoadOptions = {}): Promise<never> {
+async function doRun(
+  url: string | undefined,
+  opts: RunOpts,
+  loadOpts: LoadOptions = {},
+): Promise<never> {
   try {
     if (opts.failOn && !(opts.failOn in SEVERITY_ORDER)) {
       throw new ConfigError(`--fail-on must be one of: ${Object.keys(SEVERITY_ORDER).join(', ')}`);
@@ -134,12 +145,18 @@ program
   .argument('[url]', 'target URL (overrides config `target`)')
   .option('-c, --config <path>', 'path to a buttonmash config file')
   .option('-s, --seed <seed>', 'reproducibility seed')
-  .option('--route <url...>', 'additional route(s) to sweep in the same run (one run covers them all)')
+  .option(
+    '--route <url...>',
+    'additional route(s) to sweep in the same run (one run covers them all)',
+  )
   .option('-b, --browser <engine>', 'chromium | firefox | webkit')
   .option('--headed', 'run with a visible browser window')
   .option('--max-actions <n>', 'maximum actions to perform')
   .option('--max-duration <seconds>', 'maximum wall-clock seconds')
-  .option('--fail-on <severity>', 'min severity that fails the build (critical|high|medium|low|info)')
+  .option(
+    '--fail-on <severity>',
+    'min severity that fails the build (critical|high|medium|low|info)',
+  )
   .option('--dry-run', 'read-only mode: explore without submitting or mutating')
   .option('--auth <path>', 'Playwright storageState JSON for an authenticated session')
   .option('-o, --out <dir>', 'output directory for reports/artifacts')

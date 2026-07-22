@@ -23,7 +23,9 @@ describe('valueForField', () => {
   });
 
   it('produces a valid email for email fields', () => {
-    expect(valueForField('run', field({ kind: 'email', name: 'email' })).value).toMatch(/^[^@\s]+@[^@\s]+$/);
+    expect(valueForField('run', field({ kind: 'email', name: 'email' })).value).toMatch(
+      /^[^@\s]+@[^@\s]+$/,
+    );
   });
 
   it('clamps numbers to [min,max]', () => {
@@ -33,7 +35,10 @@ describe('valueForField', () => {
   });
 
   it('respects maxLength', () => {
-    const v = valueForField('run', field({ kind: 'text', name: 'description', maxLength: 6 })).value;
+    const v = valueForField(
+      'run',
+      field({ kind: 'text', name: 'description', maxLength: 6 }),
+    ).value;
     expect(v.length).toBeLessThanOrEqual(6);
   });
 
@@ -54,7 +59,12 @@ describe('valueForField', () => {
 
   it('mirrors all password fields in a form to one value (confirm matches)', () => {
     const pw = field({ kind: 'password', name: 'password', formKey: 'F' });
-    const confirm = field({ kind: 'password', name: 'confirmPassword', formKey: 'F', selector: '#c' });
+    const confirm = field({
+      kind: 'password',
+      name: 'confirmPassword',
+      formKey: 'F',
+      selector: '#c',
+    });
     expect(valueForField('run', pw).value).toBe(valueForField('run', confirm).value);
   });
 

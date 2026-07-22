@@ -71,7 +71,11 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
 
   const cssSelector = (e: Element): string => {
     const id = (e as HTMLElement).id;
-    if (id && /^[A-Za-z][\w-]*$/.test(id) && document.querySelectorAll('#' + (window as any).CSS.escape(id)).length === 1) {
+    if (
+      id &&
+      /^[A-Za-z][\w-]*$/.test(id) &&
+      document.querySelectorAll('#' + (window as any).CSS.escape(id)).length === 1
+    ) {
       return '#' + (window as any).CSS.escape(id);
     }
     const parts: string[] = [];
@@ -162,13 +166,16 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
     const type = typeof el.type === 'string' ? el.type : null;
     const isSubmit =
       (tag === 'input' && type === 'submit') ||
-      (tag === 'button' && (!el.getAttribute('type') || el.getAttribute('type') === 'submit') && !!el.form);
+      (tag === 'button' &&
+        (!el.getAttribute('type') || el.getAttribute('type') === 'submit') &&
+        !!el.form);
     const isFormField =
       tag === 'select' ||
       tag === 'textarea' ||
       el.isContentEditable ||
       el.getAttribute('role') === 'textbox' ||
-      (tag === 'input' && !['submit', 'button', 'reset', 'image', 'hidden'].includes(type ?? 'text'));
+      (tag === 'input' &&
+        !['submit', 'button', 'reset', 'image', 'hidden'].includes(type ?? 'text'));
 
     // nth-child paths can't cross a shadow boundary; tag shadow elements instead.
     let selectorStr: string;
@@ -194,7 +201,9 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
       selector: selectorStr,
       href: el.getAttribute('href') || undefined,
       formAction: el.form?.getAttribute('action') || el.getAttribute('formaction') || undefined,
-      formMethod: (el.form?.getAttribute('method') || el.getAttribute('formmethod') || '').toUpperCase() || undefined,
+      formMethod:
+        (el.form?.getAttribute('method') || el.getAttribute('formmethod') || '').toUpperCase() ||
+        undefined,
       disabled: el.disabled === true,
       formKey: scopeKey(el),
       isSubmit,
@@ -321,7 +330,12 @@ export async function discoverElements(page: Page): Promise<ElementDescriptor[]>
   const mainOrigin = frameOrigin(page.url());
   const frames = page
     .frames()
-    .filter((f) => f !== page.mainFrame() && frameOrigin(f.url()) !== '' && frameOrigin(f.url()) === mainOrigin)
+    .filter(
+      (f) =>
+        f !== page.mainFrame() &&
+        frameOrigin(f.url()) !== '' &&
+        frameOrigin(f.url()) === mainOrigin,
+    )
     .sort((a, b) => (a.url() + a.name()).localeCompare(b.url() + b.name()))
     .slice(0, MAX_FRAMES);
   let fi = 0;
@@ -343,7 +357,12 @@ export async function discoverElements(page: Page): Promise<ElementDescriptor[]>
   for (const { raws, frameUrl } of collected) {
     for (const r of raws) {
       if (r.disabled) continue;
-      out.push({ ...r, frameUrl, fp: elementFingerprint(r), structuralFp: structuralFingerprint(r) });
+      out.push({
+        ...r,
+        frameUrl,
+        fp: elementFingerprint(r),
+        structuralFp: structuralFingerprint(r),
+      });
     }
   }
   return out;

@@ -29,7 +29,9 @@ export function emitGitHub(result: RunResult): void {
   // GitHub caps displayed annotations (~10 each) — emit only the top findings.
   for (const f of result.findings.slice(0, 10)) {
     const level = annLevel(f.severity);
-    process.stdout.write(`::${level} title=${encProp(f.title.slice(0, 80))}::${enc(`${f.location.url} — ${f.title}`)}\n`);
+    process.stdout.write(
+      `::${level} title=${encProp(f.title.slice(0, 80))}::${enc(`${f.location.url} — ${f.title}`)}\n`,
+    );
   }
 
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
@@ -42,7 +44,10 @@ export function emitGitHub(result: RunResult): void {
   const cell = (s: string, max: number) => s.slice(0, max).replace(/\|/g, '\\|');
   const rows = result.findings
     .slice(0, 50)
-    .map((x) => `| ${x.severity} | ${cell(x.title, 100)} | ${x.count} | ${cell(x.location.url, 120)} |`)
+    .map(
+      (x) =>
+        `| ${x.severity} | ${cell(x.title, 100)} | ${x.count} | ${cell(x.location.url, 120)} |`,
+    )
     .join('\n');
 
   const md =

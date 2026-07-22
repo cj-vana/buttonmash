@@ -33,7 +33,11 @@ export function formIsUnsafe(form: FormDescriptor, cfg: ResolvedConfig): string 
   return null;
 }
 
-async function fillField(ctx: ActionContext, field: FieldDescriptor, attempt: number): Promise<boolean> {
+async function fillField(
+  ctx: ActionContext,
+  field: FieldDescriptor,
+  attempt: number,
+): Promise<boolean> {
   const { page, cfg } = ctx;
   const t = cfg.budget.interactionTimeoutMs;
   const loc = locate(page, field.selector, field.frameUrl);
@@ -44,7 +48,10 @@ async function fillField(ctx: ActionContext, field: FieldDescriptor, attempt: nu
         return false; // never upload
       case 'checkbox':
       case 'radio':
-        await loc.setChecked(field.kind === 'radio' ? true : !!v.checked, { timeout: t, force: true });
+        await loc.setChecked(field.kind === 'radio' ? true : !!v.checked, {
+          timeout: t,
+          force: true,
+        });
         break;
       case 'select':
         if (!v.value) return false;
@@ -70,19 +77,22 @@ async function fillField(ctx: ActionContext, field: FieldDescriptor, attempt: nu
 async function invalidCount(ctx: ActionContext, form: FormDescriptor): Promise<number> {
   try {
     return await withDeadline(
-      ctx.page.evaluate((selectors: string[]) => {
-        let n = 0;
-        for (const sel of selectors) {
-          const el = document.querySelector(sel) as
-            | (HTMLElement & { validity?: ValidityState })
-            | null;
-          if (!el) continue; // gone (likely submitted/navigated) → not invalid
-          const ariaInvalid = el.getAttribute('aria-invalid') === 'true';
-          const nativeInvalid = el.validity ? el.validity.valid === false : false;
-          if (ariaInvalid || nativeInvalid) n++;
-        }
-        return n;
-      }, form.fields.map((f) => f.selector)),
+      ctx.page.evaluate(
+        (selectors: string[]) => {
+          let n = 0;
+          for (const sel of selectors) {
+            const el = document.querySelector(sel) as
+              | (HTMLElement & { validity?: ValidityState })
+              | null;
+            if (!el) continue; // gone (likely submitted/navigated) → not invalid
+            const ariaInvalid = el.getAttribute('aria-invalid') === 'true';
+            const nativeInvalid = el.validity ? el.validity.valid === false : false;
+            if (ariaInvalid || nativeInvalid) n++;
+          }
+          return n;
+        },
+        form.fields.map((f) => f.selector),
+      ),
       5_000,
       'form-verify',
     );
@@ -94,13 +104,23 @@ async function invalidCount(ctx: ActionContext, form: FormDescriptor): Promise<n
 export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): Promise<FormResult> {
   const { page, rng, cfg } = ctx;
   const opts = cfg.explore.forms;
-  const result: FormResult = { submitted: false, abandoned: false, navigated: false, fieldsFilled: 0, retries: 0 };
+  const result: FormResult = {
+    submitted: false,
+    abandoned: false,
+    navigated: false,
+    fieldsFilled: 0,
+    retries: 0,
+  };
 
   const unsafe = formIsUnsafe(form, cfg);
   if (unsafe) {
-    ctx.recorder.add('guardrail', `skipped form (${unsafe}): ${form.submit?.name || form.formKey}`, {
-      severity: 'info',
-    });
+    ctx.recorder.add(
+      'guardrail',
+      `skipped form (${unsafe}): ${form.submit?.name || form.formKey}`,
+      {
+        severity: 'info',
+      },
+    );
     result.abandoned = true;
     result.reason = unsafe;
     return result;
@@ -140,7 +160,11 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
     if (!clicked) {
       const firstText = fields.find((f) => ['text', 'email', 'search'].includes(f.kind));
       if (firstText) {
-        await page.locator(firstText.selector).first().press('Enter', { timeout: t, noWaitAfter: true }).catch(() => {});
+        await page
+          .locator(firstText.selector)
+          .first()
+          .press('Enter', { timeout: t, noWaitAfter: true })
+          .catch(() => {});
       }
     }
 
@@ -158,9 +182,13 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
     // else: validation failed — loop to repair with escalated values
   }
 
-  ctx.recorder.add('form-validation', `form not accepted after ${maxAttempts} attempts: ${form.submit?.name || form.formKey}`, {
-    severity: 'low',
-  });
+  ctx.recorder.add(
+    'form-validation',
+    `form not accepted after ${maxAttempts} attempts: ${form.submit?.name || form.formKey}`,
+    {
+      severity: 'low',
+    },
+  );
   result.reason = 'validation failed';
   return result;
 }

@@ -22,14 +22,18 @@ function el(over: Partial<ElementDescriptor>): ElementDescriptor {
 describe('scorePrimaryAction', () => {
   it('ranks create/save/submit high and destructive at zero', () => {
     expect(scorePrimaryAction(el({ tag: 'button', name: 'Create' }))).toBeGreaterThanOrEqual(0.7);
-    expect(scorePrimaryAction(el({ tag: 'button', name: 'Save changes' }))).toBeGreaterThanOrEqual(0.7);
+    expect(scorePrimaryAction(el({ tag: 'button', name: 'Save changes' }))).toBeGreaterThanOrEqual(
+      0.7,
+    );
     expect(scorePrimaryAction(el({ tag: 'button', name: 'Add row' }))).toBeGreaterThanOrEqual(0.7);
     expect(scorePrimaryAction(el({ tag: 'button', name: 'Delete' }))).toBe(0);
     expect(scorePrimaryAction(el({ tag: 'button', name: 'Log out' }))).toBe(0);
   });
 
   it('treats type=submit as a strong submit', () => {
-    expect(scorePrimaryAction(el({ tag: 'button', isSubmit: true, name: '' }))).toBeGreaterThan(0.5);
+    expect(scorePrimaryAction(el({ tag: 'button', isSubmit: true, name: '' }))).toBeGreaterThan(
+      0.5,
+    );
   });
 });
 

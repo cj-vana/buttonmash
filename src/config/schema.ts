@@ -234,9 +234,7 @@ const DetectorsSchema = z
 const ReportSchema = z
   .object({
     outDir: z.string().default('buttonmash-report'),
-    formats: z
-      .array(z.enum(['json', 'junit', 'html', 'sarif']))
-      .default(['json', 'junit', 'html']),
+    formats: z.array(z.enum(['json', 'junit', 'html', 'sarif'])).default(['json', 'junit', 'html']),
     /** Emit GitHub Actions annotations + job summary when running on GHA. */
     github: z.boolean().default(true),
     captureScreenshots: z.boolean().default(true),

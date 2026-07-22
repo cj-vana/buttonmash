@@ -68,7 +68,11 @@ export async function captureScreenshot(
  *  Refuses paths that escape the report directory — the public API accepts an
  *  arbitrary RunResult, and a hostile artifact path must not inline `../.env`
  *  into the report. */
-export function inlineThumb(outDir: string, relPath: string, mime = 'image/png'): string | undefined {
+export function inlineThumb(
+  outDir: string,
+  relPath: string,
+  mime = 'image/png',
+): string | undefined {
   try {
     const abs = resolve(outDir, relPath);
     if (!abs.startsWith(resolve(outDir) + sep)) return undefined;

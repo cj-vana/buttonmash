@@ -29,7 +29,8 @@ const POSITIVE_SUBMIT = [
   'generate',
 ];
 
-const AUTH_RE = /sign ?in|sign ?up|log ?in|log ?on|register|create account|forgot|reset password|password/i;
+const AUTH_RE =
+  /sign ?in|sign ?up|log ?in|log ?on|register|create account|forgot|reset password|password/i;
 const PAYMENT_RE = /\b(card|cc|cvc|cvv|cvc2|expir|security ?code|credit)\b/i;
 
 function fieldKind(el: ElementDescriptor): FieldDescriptor['kind'] | null {
@@ -52,7 +53,8 @@ function fieldKind(el: ElementDescriptor): FieldDescriptor['kind'] | null {
     if (t === 'file') return 'file';
     // Keep the exact type: each has its own value format, and fill() throws
     // "Malformed value" on a plain YYYY-MM-DD in a datetime-local/month/week/time.
-    if (t === 'date' || t === 'datetime-local' || t === 'month' || t === 'week' || t === 'time') return t;
+    if (t === 'date' || t === 'datetime-local' || t === 'month' || t === 'week' || t === 'time')
+      return t;
     return 'text';
   }
   if (el.role === 'textbox') return 'text';
@@ -85,13 +87,17 @@ function toField(el: ElementDescriptor): FieldDescriptor | null {
 }
 
 /** Create-intent score for a button-like control (0..1). Destructive wins → 0. */
-export function scorePrimaryAction(el: ElementDescriptor, extraVerbs: readonly string[] = []): number {
+export function scorePrimaryAction(
+  el: ElementDescriptor,
+  extraVerbs: readonly string[] = [],
+): number {
   if (classifyControl(el, []).block) return 0;
   if (el.isSubmit) return 0.9;
   const name = normalizeName(el.name);
   if (!name) return el.role === 'button' || el.tag === 'button' ? 0.2 : 0;
   const verbs = [...POSITIVE_SUBMIT, ...extraVerbs.map((v) => normalizeName(v))];
-  for (const v of verbs) if (name === v || name.startsWith(v + ' ') || name.includes(' ' + v)) return 0.8;
+  for (const v of verbs)
+    if (name === v || name.startsWith(v + ' ') || name.includes(' ' + v)) return 0.8;
   if (/^\+|^add|^new/.test(name)) return 0.7;
   return 0;
 }
@@ -126,14 +132,25 @@ export function groupForms(
     if (!submit) continue; // no safe submit → not a completable create-surface
 
     const nextControls = group.filter((el) => /next|continue/i.test(el.name) && !el.disabled);
-    const haystack = group.map((el) => `${el.name} ${el.label ?? ''} ${el.autocomplete ?? ''}`).join(' ');
+    const haystack = group
+      .map((el) => `${el.name} ${el.label ?? ''} ${el.autocomplete ?? ''}`)
+      .join(' ');
     const hasLivePaymentField = group.some(
-      (el) => PAYMENT_RE.test(`${el.name} ${el.label ?? ''}`) || (el.autocomplete ?? '').startsWith('cc-'),
+      (el) =>
+        PAYMENT_RE.test(`${el.name} ${el.label ?? ''}`) ||
+        (el.autocomplete ?? '').startsWith('cc-'),
     );
     const hasPassword = fields.some((f) => f.kind === 'password');
     const isAuthForm = hasPassword || AUTH_RE.test(`${submit.name} ${haystack}`);
 
-    const fpKey = fnv1a(formKey + '|' + fields.map((f) => f.fp).sort().join(','));
+    const fpKey = fnv1a(
+      formKey +
+        '|' +
+        fields
+          .map((f) => f.fp)
+          .sort()
+          .join(','),
+    );
     forms.push({ formKey, fpKey, fields, submit, nextControls, hasLivePaymentField, isAuthForm });
   }
   return forms;

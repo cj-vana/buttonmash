@@ -70,8 +70,7 @@ export function attachSignalListeners(deps: SignalDeps): void {
       // payments) is downgraded unless the user opts in.
       const src = originOf(msg.location()?.url ?? '');
       const thirdParty = src !== '' && !allowed.has(src);
-      const severity: Severity =
-        thirdParty && !cfg.detectors.thirdPartyConsole ? 'low' : 'high';
+      const severity: Severity = thirdParty && !cfg.detectors.thirdPartyConsole ? 'low' : 'high';
       recorder.add('console.error', redact(text), {
         severity,
         meta: thirdParty ? { source: src } : undefined,
@@ -128,7 +127,15 @@ export function attachSignalListeners(deps: SignalDeps): void {
     // A 4xx/5xx on a navigated DOCUMENT is a broken route → high. API calls are
     // high for 5xx, medium for 4xx; asset failures stay low.
     const severity: Severity =
-      status >= 500 ? (isDoc || isApi ? 'high' : 'medium') : isDoc ? 'high' : isApi ? 'medium' : 'low';
+      status >= 500
+        ? isDoc || isApi
+          ? 'high'
+          : 'medium'
+        : isDoc
+          ? 'high'
+          : isApi
+            ? 'medium'
+            : 'low';
     recorder.add(kind, redact(`${status} ${url}`), {
       severity,
       meta: { status, resourceType: type },

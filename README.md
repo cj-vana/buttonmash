@@ -85,7 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.1.8
+      - uses: cj-vana/buttonmash@v0.1.10
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
