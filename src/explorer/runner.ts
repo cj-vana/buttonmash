@@ -7,29 +7,22 @@
 import { resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 
-import type { Browser, Page } from 'playwright';
+import type { Browser } from 'playwright';
 
 import type { ResolvedConfig } from '../config/load';
-import { compareWithBaseline, isFailingFinding, loadBaseline } from '../baseline';
+import { loadBaseline } from '../baseline';
 import { sleep, TimeoutError, withDeadline } from '../core/async';
 import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
 import { logger } from '../core/logger';
-import { anyMatch, compileRegexes, combineRegexes } from '../core/regex';
+import { compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
-import {
-  EXIT,
-  type BaselineComparison,
-  type LoggedAction,
-  type RunResult,
-  type Severity,
-} from '../core/types';
+import type { LoggedAction, RunResult } from '../core/types';
 import {
   captureScreenshot,
   ensureArtifactDir,
   startTracing,
   stopTracing,
 } from '../capture/artifacts';
-import { aggregateFindings } from '../detectors/aggregate';
 import { runPageChecks, type DetectorState } from '../detectors/page-checks';
 import { SignalRecorder } from '../detectors/recorder';
 import {
@@ -42,9 +35,12 @@ import { attachPageFence, installContextFence, isAllowedOrigin } from '../guardr
 import { launchBrowser, createDeterministicContext } from '../session/browser';
 import { performScriptedLogin, validateStorageState } from '../session/auth';
 import { executeAction, gatePlan, planAction, type ActionContext } from './actions';
-import { collectLinks, discoverElements, drainNavLog, INTERACTIVE_SELECTOR } from './discover';
+import { collectLinks, discoverElements, drainNavLog } from './discover';
 import { groupForms } from './forms';
 import { Explorer } from './explorer';
+import { RouteFrontier } from './frontier';
+import { awaitPageReady } from './readiness';
+import { finalizeRun } from './run-result';
 
 import { version } from '../version';
 
@@ -53,33 +49,18 @@ export interface RunButtonmashResult {
   outDir: string;
 }
 
-/**
- * Wait for the page to be usable: the 'load' event, then (bounded) for at least
- * one interactive element to exist. Client-rendered SPAs resolve
- * 'domcontentloaded' before they mount, so discovery would otherwise see an
- * empty page.
- */
-async function awaitReady(page: Page, ms: number): Promise<void> {
-  await withDeadline(page.waitForLoadState('load'), ms, 'load').catch(() => {});
-  await page
-    .waitForFunction(
-      (sel) => {
-        if (document.querySelectorAll(sel as string).length > 0) return true;
-        // Shadow-DOM apps (Lit/Stencil) and iframe UIs keep every control out
-        // of the light DOM — an open shadow root or a frame counts as ready,
-        // or this probe would burn the full timeout on every single action.
-        if (document.querySelector('iframe')) return true;
-        const els = document.querySelectorAll('*');
-        const cap = Math.min(els.length, 4000);
-        for (let i = 0; i < cap; i++) {
-          if ((els[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot) return true;
-        }
-        return false;
-      },
-      INTERACTIVE_SELECTOR,
-      { timeout: ms, polling: 250 },
-    )
-    .catch(() => {});
+type TerminationKind =
+  | 'complete'
+  | 'aborted'
+  | 'billing-refused'
+  | 'crash-limit'
+  | 'auth-failed'
+  | 'session-expired'
+  | 'internal-error';
+
+interface Termination {
+  kind: TerminationKind;
+  reason: string;
 }
 
 export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashResult> {
@@ -196,39 +177,15 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const explorer = new Explorer(rng, cfg.explore.epsilon);
   const navTimeout = Math.max(cfg.budget.actionTimeoutMs, 30_000);
 
-  // Crawl frontier. Configured routes seed it; when crawl is on, every
-  // same-origin link discovered while exploring is enqueued too, so one run
-  // sweeps the whole reachable site breadth-first. Dangerous/off-origin URLs
-  // are never enqueued.
-  const FRONTIER_CAP = 5000;
-  const visited = new Set<string>(); // normalized URLs already explored
-  const queued = new Set<string>(); // normalized URLs currently in the frontier
-  const crashedUrls = new Set<string>(); // pages that crashed the renderer — don't revisit
-  const frontier: string[] = []; // absolute URLs to visit (FIFO)
-
-  const enqueue = (raw: string): void => {
-    let u: URL;
-    try {
-      u = new URL(raw);
-    } catch {
-      return;
-    }
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
-    if (!allowedSet.has(u.origin)) return;
-    // routePath folds hash-router routes in, so `#/account/delete` is guarded
-    // exactly like `/account/delete`.
-    const p = routePath(u);
-    if (blockedPathRe?.test(p)) return;
-    if (excludeRe.length && anyMatch(p, excludeRe)) return;
-    if (includeRe.length && !anyMatch(p, includeRe)) return;
-    const n = normalizeUrl(raw);
-    if (visited.has(n) || queued.has(n) || crashedUrls.has(n) || frontier.length >= FRONTIER_CAP)
-      return;
-    queued.add(n);
-    frontier.push(raw);
-  };
-
-  for (const s of cfg.routes) enqueue(s);
+  // Configured routes seed a bounded breadth-first frontier; crawl discovery
+  // adds same-origin links and client-side navigations as the run progresses.
+  const frontier = new RouteFrontier({
+    allowedOrigins: allowedSet,
+    blockedPath: blockedPathRe,
+    includePaths: includeRe,
+    excludePaths: excludeRe,
+  });
+  for (const route of cfg.routes) frontier.enqueue(route);
 
   const gotoUrl = async (u: string): Promise<void> => {
     await withDeadline(
@@ -243,38 +200,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     });
   };
 
-  /** Navigate to the next unvisited page in the frontier; false if empty. */
-  const gotoNext = async (): Promise<boolean> => {
-    while (frontier.length > 0) {
-      const u = frontier.shift()!;
-      const n = normalizeUrl(u);
-      queued.delete(n);
-      if (visited.has(n)) continue;
-      // Mark the *requested* URL visited, not just wherever we land: a link
-      // that redirects elsewhere (or fails to load) would otherwise be
-      // re-enqueued and re-attempted forever, and the frontier never drains.
-      visited.add(n);
-      await gotoUrl(u);
-      return true;
-    }
-    return false;
-  };
-
-  // Move to the next page. When the link/nav frontier is dry, return to the
-  // target and keep exploring — many SPAs navigate via buttons, so re-clicking
-  // around the app surfaces new routes (the explorer remembers what it already
-  // tried). Give up only after several returns reveal no new page.
-  let emptyReturns = 0;
-  let pagesAtLastEmpty = -1;
-  const moveOn = async (): Promise<boolean> => {
-    if (await gotoNext()) return true;
-    if (visited.size === pagesAtLastEmpty) emptyReturns += 1;
-    else emptyReturns = 0;
-    pagesAtLastEmpty = visited.size;
-    if (emptyReturns >= 3) return false;
-    await gotoUrl(cfg.target);
-    return true;
-  };
+  const moveOn = (): Promise<boolean> => frontier.moveOn(cfg.target, gotoUrl);
 
   if (cfg.explore.crawl) logger.info('Crawl:   auto-discovering links across the site');
   else if (cfg.routes.length) logger.info(`Routes:  sweeping ${1 + cfg.routes.length} routes`);
@@ -335,8 +261,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   let depth = 0;
   let sinceNew = 0;
   let recordsCreated = 0;
-  let stopReason = 'budget exhausted';
-  let internalError = false;
+  let termination: Termination = { kind: 'complete', reason: 'budget exhausted' };
 
   // Graceful shutdown: on SIGINT/SIGTERM (CI cancel/timeout) flip a flag and let
   // the loop break cleanly so the report still flushes with partial findings.
@@ -350,19 +275,25 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   try {
     for (let i = 0; i < cfg.budget.maxActions; i++) {
       if (aborted) {
-        stopReason = 'aborted (received SIGINT/SIGTERM)';
+        termination = { kind: 'aborted', reason: 'aborted (received SIGINT/SIGTERM)' };
         break;
       }
       if (Date.now() - start > cfg.budget.maxDurationMs) {
-        stopReason = 'time budget reached';
+        termination = { kind: 'complete', reason: 'time budget reached' };
         break;
       }
-      if (visited.size >= cfg.budget.maxPages) {
-        stopReason = `page budget reached (${cfg.budget.maxPages} pages)`;
+      if (frontier.visitedCount >= cfg.budget.maxPages) {
+        termination = {
+          kind: 'complete',
+          reason: `page budget reached (${cfg.budget.maxPages} pages)`,
+        };
         break;
       }
       if (billingLive && cfg.guardrails.billing.mode === 'refuse') {
-        stopReason = 'live billing mode detected (refusing to continue)';
+        termination = {
+          kind: 'billing-refused',
+          reason: 'live billing mode detected (refusing to continue)',
+        };
         break;
       }
       if (pageCrashed || page.isClosed()) {
@@ -377,10 +308,13 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         pageCrashed = false;
         crashCount += 1;
         if (crashCount > MAX_CRASHES) {
-          stopReason = `too many renderer crashes (${crashCount})`;
+          termination = {
+            kind: 'crash-limit',
+            reason: `too many renderer crashes (${crashCount})`,
+          };
           break;
         }
-        crashedUrls.add(normalizeUrl(lastUrl)); // don't revisit the page that crashed
+        frontier.markCrashed(lastUrl); // don't revisit the page that crashed
         await page.close().catch(() => {});
         page = await setupPage();
         depth = 0;
@@ -398,7 +332,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       const saturated = sinceNew >= cfg.budget.saturationLimit;
       if (depth >= cfg.budget.maxDepth || offOrigin || deadPage || saturated) {
         if (!(await moveOn())) {
-          stopReason = crawlDone();
+          termination = { kind: 'complete', reason: crawlDone() };
           break;
         }
         depth = 0;
@@ -426,7 +360,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
               `login script failed to authenticate after ${MAX_LOGIN_ATTEMPTS} attempts — check credentials/selectors`,
               { severity: 'high' },
             );
-            stopReason = 'login script could not authenticate';
+            termination = { kind: 'auth-failed', reason: 'login script could not authenticate' };
             break;
           }
           await doLogin();
@@ -435,7 +369,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           sinceNew = 0;
           url = page.url();
         } else if (wasAuthenticated) {
-          stopReason = 'session expired — set auth.loginScript to re-authenticate';
+          termination = {
+            kind: 'session-expired',
+            reason: 'session expired — set auth.loginScript to re-authenticate',
+          };
           break;
         }
       }
@@ -448,18 +385,18 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       lastUrl = url;
       recorder.setContext(i, url);
       pagesVisited.add(nUrl);
-      visited.add(nUrl);
+      frontier.markVisited(nUrl);
 
       // Wait for the app to actually render interactive content. Client-rendered
       // SPAs return from 'domcontentloaded' before React/Vue has mounted, so we
       // also wait (bounded) for at least one interactive element to appear.
-      await awaitReady(page, cfg.budget.readyTimeoutMs);
+      await awaitPageReady(page, cfg.budget.readyTimeoutMs);
 
       // Grow the frontier with same-origin links AND any client-side (SPA)
       // navigations the app made (button/navigate() routes that aren't <a href>).
       if (cfg.explore.crawl) {
-        for (const link of await collectLinks(page)) enqueue(link);
-        for (const nav of await drainNavLog(page)) enqueue(nav);
+        for (const link of await collectLinks(page)) frontier.enqueue(link);
+        for (const nav of await drainNavLog(page)) frontier.enqueue(nav);
       }
 
       const signalsBefore = recorder.count();
@@ -478,7 +415,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
 
       if (elements.length === 0) {
         if (!(await moveOn())) {
-          stopReason = crawlDone();
+          termination = { kind: 'complete', reason: crawlDone() };
           break;
         }
         depth = 0;
@@ -588,124 +525,37 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     }
   } catch (err) {
     // An unexpected internal error must not lose the partial report.
-    stopReason = `internal error: ${(err as Error).message}`;
-    internalError = true;
+    termination = { kind: 'internal-error', reason: `internal error: ${(err as Error).message}` };
     recorder.add('driver', `run loop error: ${(err as Error).message}`, { severity: 'medium' });
   } finally {
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
   }
 
-  logger.step(`Stopping: ${stopReason}.`);
+  logger.step(`Stopping: ${termination.reason}.`);
 
   // Teardown — close context to flush video, stop tracing first.
   const traceRel = await stopTracing(context, cfg, outDir).catch(() => undefined);
   await context.close().catch(() => {});
   await browser.close().catch(() => {});
 
-  let findings = aggregateFindings({
+  const result = finalizeRun({
+    cfg,
+    baseline: baselineSnapshot,
+    startedAt,
+    startTimeMs: start,
     signals: recorder.signals,
     actions: actionLog,
     screenshots,
+    tracePath: traceRel,
+    pagesVisited: pagesVisited.size,
+    statesDiscovered: explorer.statesDiscovered,
+    recordsCreated,
+    completion: {
+      complete: termination.kind === 'complete' && !initialLoadFailed && !aborted,
+      internalError: termination.kind === 'internal-error',
+    },
   });
-  if (traceRel && findings.length) {
-    findings[0]!.artifacts.push({ type: 'trace', path: traceRel, mime: 'application/zip' });
-  }
-  const comparisonComplete =
-    !internalError &&
-    !initialLoadFailed &&
-    !aborted &&
-    !stopReason.startsWith('live billing mode detected') &&
-    !stopReason.startsWith('too many renderer crashes') &&
-    !stopReason.startsWith('login script could not authenticate') &&
-    !stopReason.startsWith('session expired');
-  let baseline: BaselineComparison | undefined;
-  if (baselineSnapshot) {
-    const classified = compareWithBaseline(findings, baselineSnapshot, {
-      currentConfig: cfg,
-      currentToolVersion: version,
-      complete: comparisonComplete,
-    });
-    findings = classified.findings;
-    baseline = classified.comparison;
-  }
-
-  const findingsBySeverity: Record<Severity, number> = {
-    critical: 0,
-    high: 0,
-    medium: 0,
-    low: 0,
-    info: 0,
-  };
-  for (const f of findings) findingsBySeverity[f.severity] += 1;
-
-  // A run truncated by an internal error must not read as a clean pass (exit 0
-  // hid real truncations behind a green build); findings above the threshold
-  // still win — "bugs found" carries more information than "tool errored".
-  const failed = findings.some((finding) =>
-    isFailingFinding(finding, cfg.failOn, cfg.baseline.failOnNew),
-  );
-  const exitCode = failed ? EXIT.FINDINGS : internalError ? EXIT.ERROR : EXIT.CLEAN;
-
-  // Redacted snapshot of the resolved config for faithful cross-machine replay.
-  const resolvedConfig = JSON.parse(JSON.stringify(cfg)) as {
-    configPath?: unknown;
-    headers?: Record<string, string>;
-    auth?: {
-      storageState?: string;
-      loginScript?: { username?: string; password?: string };
-      basicAuth?: { username: string; password: string };
-    };
-    baseline?: { path?: string };
-  } & Record<string, unknown>;
-  delete resolvedConfig.configPath;
-  if (resolvedConfig.auth?.storageState) resolvedConfig.auth.storageState = '<storageState>';
-  if (resolvedConfig.auth?.loginScript) {
-    resolvedConfig.auth.loginScript.username = '***';
-    resolvedConfig.auth.loginScript.password = '***';
-  }
-  if (resolvedConfig.auth?.basicAuth)
-    resolvedConfig.auth.basicAuth = { username: '***', password: '***' };
-  if (resolvedConfig.headers) {
-    for (const k of Object.keys(resolvedConfig.headers)) resolvedConfig.headers[k] = '***';
-  }
-  if (resolvedConfig.baseline?.path) resolvedConfig.baseline.path = '<baseline>';
-
-  const finishedAt = new Date();
-  const result: RunResult = {
-    schemaVersion: 1,
-    tool: { name: 'buttonmash', version },
-    run: {
-      id: cfg.seed,
-      startedAt: startedAt.toISOString(),
-      finishedAt: finishedAt.toISOString(),
-      durationMs: finishedAt.getTime() - start,
-      target: cfg.target,
-      browser: cfg.browser,
-      viewport: cfg.viewport,
-      exitCode,
-      dryRun: cfg.guardrails.dryRun,
-      complete: comparisonComplete,
-    },
-    config: {
-      seed: cfg.seed,
-      maxActions: cfg.budget.maxActions,
-      maxDurationMs: cfg.budget.maxDurationMs,
-      failOn: cfg.failOn,
-      failOnNew: cfg.baseline.failOnNew,
-    },
-    stats: {
-      actionsTaken: actionLog.length,
-      pagesVisited: pagesVisited.size,
-      statesDiscovered: explorer.statesDiscovered,
-      recordsCreated,
-      findingsBySeverity,
-    },
-    actions: actionLog,
-    findings,
-    baseline,
-    resolvedConfig,
-  };
 
   return { result, outDir };
 }
