@@ -16,6 +16,7 @@ function baseResult(findings: Finding[]): RunResult {
       viewport: { width: 1280, height: 800 },
       exitCode: findings.length ? 1 : 0,
       dryRun: false,
+      complete: true,
     },
     config: {
       seed: 'seed',
@@ -96,6 +97,29 @@ describe('junit', () => {
     const xml = toJUnit(result);
     expect(xml).toContain('failures="1"');
     expect(xml).toContain('skipped="1"');
+    expect(xml).toContain('existing baseline finding');
+  });
+
+  it('emits a failure when the tool exits with an error and has no findings', () => {
+    const result = baseResult([]);
+    result.run.exitCode = 2;
+    result.run.complete = false;
+
+    const xml = toJUnit(result);
+    expect(xml).toContain('tests="1" failures="1"');
+    expect(xml).toContain('buttonmash tool error/incomplete run');
+    expect(xml).toContain('type="buttonmash:tool-error"');
+  });
+
+  it('adds an incomplete-run failure alongside skipped baseline findings', () => {
+    const result = baseResult([finding({ baselineState: 'existing' })]);
+    result.config.failOnNew = true;
+    result.run.exitCode = 1;
+    result.run.complete = false;
+
+    const xml = toJUnit(result);
+    expect(xml).toContain('tests="2" failures="1" skipped="1"');
+    expect(xml).toContain('type="buttonmash:incomplete-run"');
     expect(xml).toContain('existing baseline finding');
   });
 });

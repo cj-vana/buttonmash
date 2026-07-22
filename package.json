@@ -1,6 +1,6 @@
 {
   "name": "buttonmash",
-  "version": "0.1.10",
+  "version": "0.2.0",
   "description": "A CI chaos monkey for web apps — it presses every button, mashes random keystrokes, tries to break your UI, and reports what it found. Safe by default.",
   "keywords": [
     "chaos-monkey",

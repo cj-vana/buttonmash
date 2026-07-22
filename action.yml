@@ -33,7 +33,7 @@ inputs:
     default: 'true'
 outputs:
   exit-code:
-    description: 'buttonmash exit code (0 clean, 1 findings, 2 tool error).'
+    description: 'buttonmash exit code (0 clean, 1 findings/safety stop, 2 tool error/interruption).'
     value: ${{ steps.run.outputs.exit-code }}
   findings:
     description: 'Total number of findings.'

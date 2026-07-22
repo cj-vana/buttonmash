@@ -10,7 +10,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write # npm provenance
@@ -38,10 +38,56 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
-      - run: npx playwright install --with-deps chromium
-      - run: npm test
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:coverage
         env:
           CI: 'true'
+
+      - name: Smoke Firefox
+        run: npx vitest run test/browser-smoke.test.ts
+        env:
+          BUTTONMASH_SMOKE_BROWSER: firefox
+          CI: 'true'
+
+      - name: Smoke WebKit
+        run: npx vitest run test/browser-smoke.test.ts
+        env:
+          BUTTONMASH_SMOKE_BROWSER: webkit
+          CI: 'true'
+
+      - name: Pack the release artifact
+        id: package
+        run: echo "path=$GITHUB_WORKSPACE/$(npm pack --silent)" >> "$GITHUB_OUTPUT"
+
+      - name: Start composite-action target
+        run: |
+          node test/fixtures/action-server.mjs &
+          for attempt in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:4173 >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Smoke the packed artifact through the composite action
+        id: buttonmash
+        uses: ./
+        with:
+          target: http://127.0.0.1:4173
+          version: file:${{ steps.package.outputs.path }}
+          args: --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
+          upload-report: 'false'
+
+      - name: Verify composite-action outputs
+        env:
+          EXIT_CODE: ${{ steps.buttonmash.outputs.exit-code }}
+          FINDINGS: ${{ steps.buttonmash.outputs.findings }}
+          REPORT_PATH: ${{ steps.buttonmash.outputs.report-path }}
+        run: |
+          test "$EXIT_CODE" = "0"
+          test "$FINDINGS" = "0"
+          test -f "$REPORT_PATH/results.json"
 
       - name: Publish to npm
         run: npm publish --provenance --access public

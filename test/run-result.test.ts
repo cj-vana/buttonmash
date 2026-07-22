@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
+import { baselineComparisonKey, type BaselineSnapshot } from '../src/baseline';
 import { loadConfig, type ResolvedConfig } from '../src/config/load';
 import { EXIT, type Signal } from '../src/core/types';
 import { finalizeRun, type FinalizeRunInput } from '../src/explorer/run-result';
+import { version } from '../src/version';
 
 let cfg: ResolvedConfig;
 
@@ -43,7 +45,7 @@ function input(overrides: Partial<FinalizeRunInput> = {}): FinalizeRunInput {
     recordsCreated: 1,
     completion: {
       complete: true,
-      internalError: false,
+      incompleteExitCode: EXIT.ERROR,
     },
     ...overrides,
   };
@@ -90,12 +92,67 @@ describe('run result finalization', () => {
       input({
         completion: {
           complete: false,
-          internalError: true,
+          incompleteExitCode: EXIT.ERROR,
         },
       }),
     );
 
     expect(result.run.complete).toBe(false);
     expect(result.run.exitCode).toBe(EXIT.ERROR);
+  });
+
+  it('keeps incomplete safety runs at exit 1 when every finding is existing', () => {
+    cfg.baseline.failOnNew = true;
+    const signal: Signal = {
+      kind: 'session-lost',
+      detail: 'redirected to login',
+      url: 'https://app.test/login',
+      at: Date.now(),
+    };
+    const initial = finalizeRun(input({ signals: [signal] }));
+    const known = initial.findings[0]!;
+    const baseline: BaselineSnapshot = {
+      source: 'baseline.json',
+      findings: [
+        {
+          dedupKey: known.dedupKey,
+          severity: known.severity,
+          category: known.category,
+          title: known.title,
+          location: known.location,
+        },
+      ],
+      complete: true,
+      toolVersion: version,
+      comparisonKey: baselineComparisonKey(cfg),
+    };
+
+    const result = finalizeRun(
+      input({
+        baseline,
+        signals: [signal],
+        completion: { complete: false, incompleteExitCode: EXIT.FINDINGS },
+      }),
+    );
+    expect(result.findings[0]?.baselineState).toBe('existing');
+    expect(result.run.complete).toBe(false);
+    expect(result.run.exitCode).toBe(EXIT.FINDINGS);
+  });
+
+  it('preserves an incomplete safety verdict when a finding is independently failing', () => {
+    const signal: Signal = {
+      kind: 'crash',
+      detail: 'renderer crashed',
+      url: 'https://app.test/projects',
+      at: Date.now(),
+    };
+    const result = finalizeRun(
+      input({
+        signals: [signal],
+        completion: { complete: false, incompleteExitCode: EXIT.FINDINGS },
+      }),
+    );
+    expect(result.findings).toHaveLength(1);
+    expect(result.run.exitCode).toBe(EXIT.FINDINGS);
   });
 });

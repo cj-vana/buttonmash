@@ -9,7 +9,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { isFailingFinding } from '../baseline';
-import type { Finding, RunResult } from '../core/types';
+import { EXIT, type Finding, type RunResult } from '../core/types';
 
 export function xmlEscape(s: string): string {
   return (
@@ -41,13 +41,28 @@ function reproText(f: Finding): string {
 export function toJUnit(result: RunResult): string {
   const { findings } = result;
   const suiteName = `buttonmash (${result.run.target})`;
+  const runFailed = result.run.exitCode === EXIT.ERROR || result.run.complete === false;
 
   const cases: string[] = [];
-  if (findings.length === 0) {
+  if (runFailed) {
+    const toolError = result.run.exitCode === EXIT.ERROR;
+    const message = toolError
+      ? `buttonmash tool error or interruption (exit ${result.run.exitCode})`
+      : `buttonmash run did not complete successfully (exit ${result.run.exitCode})`;
+    const failureType = toolError ? 'buttonmash:tool-error' : 'buttonmash:incomplete-run';
+    cases.push(
+      `    <testcase name="buttonmash tool error/incomplete run" classname="buttonmash" time="${(result.run.durationMs / 1000).toFixed(3)}">\n` +
+        `      <failure message="${xmlEscape(message)}" type="${failureType}">${xmlEscape(
+          `Target: ${result.run.target}\nSeed: ${result.config.seed}\nComplete: ${String(result.run.complete === true)}`,
+        )}</failure>\n` +
+        `    </testcase>`,
+    );
+  }
+  if (findings.length === 0 && !runFailed) {
     cases.push(
       `    <testcase name="buttonmash run (seed ${xmlEscape(result.config.seed)})" classname="buttonmash" time="${(result.run.durationMs / 1000).toFixed(3)}"/>`,
     );
-  } else {
+  } else if (findings.length > 0) {
     for (const f of findings) {
       const name = xmlEscape(`${f.title} [${f.dedupKey}]`);
       const type = xmlEscape(`${f.severity}:${f.category}`);
@@ -75,11 +90,12 @@ export function toJUnit(result: RunResult): string {
     }
   }
 
-  const failures = findings.filter((finding) =>
+  const findingFailures = findings.filter((finding) =>
     isFailingFinding(finding, result.config.failOn, result.config.failOnNew ?? false),
   ).length;
-  const skipped = findings.length - failures;
-  const total = Math.max(1, findings.length);
+  const failures = findingFailures + (runFailed ? 1 : 0);
+  const skipped = findings.length - findingFailures;
+  const total = Math.max(1, findings.length + (runFailed ? 1 : 0));
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
     `<testsuites name="${xmlEscape(suiteName)}" tests="${total}" failures="${failures}" skipped="${skipped}">\n` +

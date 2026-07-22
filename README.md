@@ -72,7 +72,8 @@ npx buttonmash run https://staging.example.com --seed <seed-from-report>
 
 When it finishes you get a `buttonmash-report/` folder with `report.html`
 (self-contained), `results.json`, and `junit.xml`. Exit code is `1` if anything
-broke at or above your fail threshold.
+broke at or above your fail threshold or a safety/target condition stopped the
+run; exit code `2` means a tool error or interruption left partial results.
 
 `buttonmash doctor` is a bounded preflight: it launches the configured browser,
 loads the target, verifies saved or scripted authentication, checks the final
@@ -94,7 +95,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.1.10
+      - uses: cj-vana/buttonmash@v0.2.0
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
@@ -340,8 +341,8 @@ Without that explicit identity, absent findings are never claimed as resolved.
 | Code | Meaning |
 |---|---|
 | `0` | No findings at/above the fail threshold |
-| `1` | Findings at/above the threshold — **the build-failing signal** |
-| `2` | buttonmash itself errored (bad config/usage/internal) |
+| `1` | Findings at/above the threshold, or a safety/target stop — **the build-failing signal** |
+| `2` | Tool/config error or interruption (partial run) |
 
 ## Reproducibility
 

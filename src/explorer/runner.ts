@@ -16,7 +16,7 @@ import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
 import { logger } from '../core/logger';
 import { compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
-import type { LoggedAction, RunResult } from '../core/types';
+import { EXIT, type LoggedAction, type RunResult } from '../core/types';
 import {
   captureScreenshot,
   ensureArtifactDir,
@@ -553,7 +553,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     recordsCreated,
     completion: {
       complete: termination.kind === 'complete' && !initialLoadFailed && !aborted,
-      internalError: termination.kind === 'internal-error',
+      incompleteExitCode:
+        aborted || termination.kind === 'aborted' || termination.kind === 'internal-error'
+          ? EXIT.ERROR
+          : EXIT.FINDINGS,
     },
   });
 

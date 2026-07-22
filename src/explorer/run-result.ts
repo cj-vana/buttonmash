@@ -6,7 +6,7 @@ import { version } from '../version';
 
 export interface RunCompletion {
   complete: boolean;
-  internalError: boolean;
+  incompleteExitCode: typeof EXIT.FINDINGS | typeof EXIT.ERROR;
 }
 
 export interface FinalizeRunInput {
@@ -91,10 +91,13 @@ export function finalizeRun(input: FinalizeRunInput): RunResult {
   const failed = findings.some((finding) =>
     isFailingFinding(finding, input.cfg.failOn, input.cfg.baseline.failOnNew),
   );
-  const exitCode = failed
-    ? EXIT.FINDINGS
-    : input.completion.internalError
-      ? EXIT.ERROR
+  // An incomplete run cannot prove the target is clean. Safety/target failures
+  // remain exit 1 while tool failures and interruption remain exit 2, even when
+  // --fail-on-new classifies every observed finding as existing.
+  const exitCode = !complete
+    ? input.completion.incompleteExitCode
+    : failed
+      ? EXIT.FINDINGS
       : EXIT.CLEAN;
   const finishedAt = new Date();
 

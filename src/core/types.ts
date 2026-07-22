@@ -307,8 +307,8 @@ export interface RunResult {
 export const EXIT = {
   /** No findings at or above the fail threshold. */
   CLEAN: 0,
-  /** Findings at or above the fail threshold — the build-failing signal. */
+  /** Findings at/above the fail threshold or an incomplete safety/target run. */
   FINDINGS: 1,
-  /** The tool itself errored (bad config, usage, internal failure). */
+  /** The tool errored or was interrupted before it could complete. */
   ERROR: 2,
 } as const;

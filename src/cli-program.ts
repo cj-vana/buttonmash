@@ -85,8 +85,9 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
       ? pc.green(pc.bold('✓ PASSED')) + pc.dim(' — nothing broke above the fail threshold')
       : result.run.exitCode === EXIT.ERROR
         ? pc.yellow(pc.bold('⚠ ERROR')) +
-          pc.dim(' — the run was truncated by an internal error (partial results)')
-        : pc.red(pc.bold('✗ FAILED')) + pc.dim(` — findings ≥ ${result.config.failOn}`),
+          pc.dim(' — the run was interrupted or hit a tool error (partial results)')
+        : pc.red(pc.bold('✗ FAILED')) +
+          pc.dim(` — findings ≥ ${result.config.failOn} or a safety/target stop`),
   );
   console.log(
     `  ${result.stats.actionsTaken} actions · ${result.stats.pagesVisited} pages · ${result.stats.statesDiscovered} states · ${(result.run.durationMs / 1000).toFixed(1)}s`,
