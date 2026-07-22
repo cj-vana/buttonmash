@@ -70,13 +70,20 @@ export async function performScriptedLogin(
     return false;
   }
   if (ls.successUrl) {
-    await page.waitForURL(new RegExp(ls.successUrl), { timeout: timeoutMs }).catch(() => {});
+    try {
+      await page.waitForURL(new RegExp(ls.successUrl), { timeout: timeoutMs });
+    } catch {
+      return false;
+    }
   } else if (ls.successSelector) {
-    await page
-      .locator(ls.successSelector)
-      .first()
-      .waitFor({ state: 'visible', timeout: timeoutMs })
-      .catch(() => {});
+    try {
+      await page
+        .locator(ls.successSelector)
+        .first()
+        .waitFor({ state: 'visible', timeout: timeoutMs });
+    } catch {
+      return false;
+    }
   } else {
     await page.waitForLoadState('domcontentloaded', { timeout: timeoutMs }).catch(() => {});
   }

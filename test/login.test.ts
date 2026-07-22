@@ -50,6 +50,14 @@ describe('scripted login', () => {
     await ctx.close();
   }, 30_000);
 
+  it('returns false when the configured success condition is not reached', async () => {
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    const badSuccess = { ...script(server.url), successUrl: '/never' };
+    expect(await performScriptedLogin(page, badSuccess, 500)).toBe(false);
+    await ctx.close();
+  });
+
   it('a full run uses the login script to reach the gated app', async () => {
     const outDir = mkdtempSync(join(tmpdir(), 'bm-login-'));
     try {

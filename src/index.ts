@@ -23,6 +23,8 @@ export { writeReports } from './report';
 export { redact, scanForSecrets } from './guardrails/secrets';
 export { classifyControl } from './guardrails/destructive';
 export { Rng } from './core/rng';
+export { runDoctor } from './doctor';
+export type { DoctorCheck, DoctorResult, DoctorStatus } from './doctor';
 export { compareWithBaseline, isFailingFinding, loadBaseline, BaselineError } from './baseline';
 export * from './core/types';
 export { version } from './version';

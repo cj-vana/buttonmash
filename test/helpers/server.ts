@@ -31,6 +31,11 @@ export async function startServer(): Promise<TestServer> {
       res.end('<!doctype html><title>Logged out</title><h1>logged out</h1>');
       return;
     }
+    if (url === '/live-billing') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>Live billing</title><p>pk_live_1234567890abcdef</p>');
+      return;
+    }
     // Same-origin iframe content (for iframe-discovery tests).
     if (url === '/frame.html') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });

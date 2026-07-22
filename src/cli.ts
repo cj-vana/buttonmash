@@ -11,6 +11,7 @@ import { loadConfig, ConfigError, type LoadOptions } from './config/load';
 import type { Config } from './config/schema';
 import { logger } from './core/logger';
 import { EXIT, SEVERITY_ORDER, type RunResult } from './core/types';
+import { runDoctor } from './doctor';
 import { runButtonmash } from './explorer/runner';
 import { writeReports } from './report';
 import { captureAuth } from './session/auth';
@@ -155,6 +156,35 @@ async function doRun(
   }
 }
 
+async function doDoctor(url: string | undefined, opts: RunOpts): Promise<never> {
+  try {
+    const cfg = await loadConfig({
+      configPath: opts.config,
+      overrides: buildOverrides(url, opts),
+      append: { allowedOrigins: opts.allowOrigin },
+    });
+    logger.setLevel(cfg.logLevel);
+    logger.banner('🩺 buttonmash doctor');
+    const result = await runDoctor(cfg);
+    for (const item of result.checks) {
+      const mark =
+        item.status === 'pass'
+          ? pc.green('✓')
+          : item.status === 'warn'
+            ? pc.yellow('⚠')
+            : pc.red('✗');
+      console.log(`${mark} ${item.id}: ${item.detail}`);
+    }
+    const foundUnsafeBilling = result.checks.some(
+      (item) => item.id === 'billing' && item.status === 'fail',
+    );
+    process.exit(result.ok ? EXIT.CLEAN : foundUnsafeBilling ? EXIT.FINDINGS : EXIT.ERROR);
+  } catch (err) {
+    logger.error((err as Error).message ?? String(err));
+    process.exit(EXIT.ERROR);
+  }
+}
+
 program
   .command('run', { isDefault: true })
   .description('Run the chaos monkey against a target URL')
@@ -185,6 +215,19 @@ program
   .option('--billing <mode>', 'live-billing guard: refuse | warn | off')
   .option('--log-level <level>', 'silent|error|warn|info|debug')
   .action((url: string | undefined, opts: RunOpts) => doRun(url, opts));
+
+program
+  .command('doctor [url]')
+  .description('Validate browser, target, auth, origin, billing, and baseline setup')
+  .option('-c, --config <path>', 'path to a buttonmash config file')
+  .option('-b, --browser <engine>', 'chromium | firefox | webkit')
+  .option('--auth <path>', 'Playwright storageState JSON')
+  .option('--allow-origin <origin...>', 'additional allowed origin(s)')
+  .option('--billing <mode>', 'live-billing guard: refuse | warn | off')
+  .option('--baseline <results.json>', 'validate and compare with a previous results.json')
+  .option('--baseline-id <id>', 'comparison identity for authenticated/header-dependent runs')
+  .option('--log-level <level>', 'silent|error|warn|info|debug')
+  .action((url: string | undefined, opts: RunOpts) => doDoctor(url, opts));
 
 program
   .command('replay <seedOrResults> [url]')

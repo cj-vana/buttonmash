@@ -59,16 +59,25 @@ npx buttonmash auth https://staging.example.com/login
 # 2. scaffold a config (optional)
 npx buttonmash init
 
-# 3. run it
+# 3. preflight the environment
+npx buttonmash doctor https://staging.example.com --auth playwright/.auth/user.json
+#    → verifies browser, target, auth, origin fence, billing mode, and baseline
+
+# 4. run it
 npx buttonmash run https://staging.example.com --auth playwright/.auth/user.json
 
-# 4. reproduce a failure exactly (the seed is printed on every run)
+# 5. reproduce a failure exactly (the seed is printed on every run)
 npx buttonmash run https://staging.example.com --seed <seed-from-report>
 ```
 
 When it finishes you get a `buttonmash-report/` folder with `report.html`
 (self-contained), `results.json`, and `junit.xml`. Exit code is `1` if anything
 broke at or above your fail threshold.
+
+`buttonmash doctor` is a bounded preflight: it launches the configured browser,
+loads the target, verifies saved or scripted authentication, checks the final
+origin, scans for live billing evidence, and validates a configured baseline.
+It does not enter the chaos/exploration loop.
 
 ## Use in CI (GitHub Actions)
 
