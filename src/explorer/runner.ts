@@ -10,6 +10,7 @@ import { mkdir } from 'node:fs/promises';
 import type { Browser, Page } from 'playwright';
 
 import type { ResolvedConfig } from '../config/load';
+import { compareWithBaseline, isFailingFinding, loadBaseline } from '../baseline';
 import { sleep, TimeoutError, withDeadline } from '../core/async';
 import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
 import { logger } from '../core/logger';
@@ -17,7 +18,7 @@ import { anyMatch, compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
 import {
   EXIT,
-  SEVERITY_ORDER,
+  type BaselineComparison,
   type LoggedAction,
   type RunResult,
   type Severity,
@@ -85,6 +86,8 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   logger.setLevel(cfg.logLevel);
   const startedAt = new Date();
   const start = Date.now();
+  // Validate the baseline before launching a browser or spending the run budget.
+  const baselineSnapshot = cfg.baseline.path ? await loadBaseline(cfg.baseline.path) : undefined;
   const outDir = resolve(process.cwd(), cfg.report.outDir);
   await mkdir(outDir, { recursive: true });
   await ensureArtifactDir(outDir);
@@ -311,6 +314,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   if (cfg.auth.loginScript) await doLogin();
 
   // Initial navigation (a hard failure here is critical).
+  let initialLoadFailed = false;
   try {
     await withDeadline(
       page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
@@ -318,6 +322,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       'initial-goto',
     );
   } catch (err) {
+    initialLoadFailed = true;
     recorder.add('driver', `failed to load target: ${(err as Error).message}`, {
       severity: 'critical',
       url: cfg.target,
@@ -598,13 +603,31 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   await context.close().catch(() => {});
   await browser.close().catch(() => {});
 
-  const findings = aggregateFindings({
+  let findings = aggregateFindings({
     signals: recorder.signals,
     actions: actionLog,
     screenshots,
   });
   if (traceRel && findings.length) {
     findings[0]!.artifacts.push({ type: 'trace', path: traceRel, mime: 'application/zip' });
+  }
+  const comparisonComplete =
+    !internalError &&
+    !initialLoadFailed &&
+    !aborted &&
+    !stopReason.startsWith('live billing mode detected') &&
+    !stopReason.startsWith('too many renderer crashes') &&
+    !stopReason.startsWith('login script could not authenticate') &&
+    !stopReason.startsWith('session expired');
+  let baseline: BaselineComparison | undefined;
+  if (baselineSnapshot) {
+    const classified = compareWithBaseline(findings, baselineSnapshot, {
+      currentConfig: cfg,
+      currentToolVersion: version,
+      complete: comparisonComplete,
+    });
+    findings = classified.findings;
+    baseline = classified.comparison;
   }
 
   const findingsBySeverity: Record<Severity, number> = {
@@ -616,11 +639,12 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   };
   for (const f of findings) findingsBySeverity[f.severity] += 1;
 
-  const failThreshold = SEVERITY_ORDER[cfg.failOn];
   // A run truncated by an internal error must not read as a clean pass (exit 0
   // hid real truncations behind a green build); findings above the threshold
   // still win — "bugs found" carries more information than "tool errored".
-  const failed = findings.some((f) => SEVERITY_ORDER[f.severity] >= failThreshold);
+  const failed = findings.some((finding) =>
+    isFailingFinding(finding, cfg.failOn, cfg.baseline.failOnNew),
+  );
   const exitCode = failed ? EXIT.FINDINGS : internalError ? EXIT.ERROR : EXIT.CLEAN;
 
   // Redacted snapshot of the resolved config for faithful cross-machine replay.
@@ -632,6 +656,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       loginScript?: { username?: string; password?: string };
       basicAuth?: { username: string; password: string };
     };
+    baseline?: { path?: string };
   } & Record<string, unknown>;
   delete resolvedConfig.configPath;
   if (resolvedConfig.auth?.storageState) resolvedConfig.auth.storageState = '<storageState>';
@@ -644,6 +669,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   if (resolvedConfig.headers) {
     for (const k of Object.keys(resolvedConfig.headers)) resolvedConfig.headers[k] = '***';
   }
+  if (resolvedConfig.baseline?.path) resolvedConfig.baseline.path = '<baseline>';
 
   const finishedAt = new Date();
   const result: RunResult = {
@@ -659,12 +685,14 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       viewport: cfg.viewport,
       exitCode,
       dryRun: cfg.guardrails.dryRun,
+      complete: comparisonComplete,
     },
     config: {
       seed: cfg.seed,
       maxActions: cfg.budget.maxActions,
       maxDurationMs: cfg.budget.maxDurationMs,
       failOn: cfg.failOn,
+      failOnNew: cfg.baseline.failOnNew,
     },
     stats: {
       actionsTaken: actionLog.length,
@@ -675,6 +703,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     },
     actions: actionLog,
     findings,
+    baseline,
     resolvedConfig,
   };
 

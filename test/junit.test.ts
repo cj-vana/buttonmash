@@ -17,7 +17,13 @@ function baseResult(findings: Finding[]): RunResult {
       exitCode: findings.length ? 1 : 0,
       dryRun: false,
     },
-    config: { seed: 'seed', maxActions: 100, maxDurationMs: 1000, failOn: 'high' },
+    config: {
+      seed: 'seed',
+      maxActions: 100,
+      maxDurationMs: 1000,
+      failOn: 'high',
+      failOnNew: false,
+    },
     stats: {
       actionsTaken: 10,
       pagesVisited: 1,
@@ -78,5 +84,18 @@ describe('junit', () => {
     const xml = toJUnit(baseResult([finding({ title: 'bad <script> & "stuff"' })]));
     expect(xml).toContain('&lt;script&gt;');
     expect(xml).not.toContain('<script>');
+  });
+
+  it('treats existing findings as skipped when only new findings fail', () => {
+    const result = baseResult([
+      finding({ dedupKey: 'known', baselineState: 'existing' }),
+      finding({ dedupKey: 'fresh', baselineState: 'new' }),
+    ]);
+    result.config.failOnNew = true;
+
+    const xml = toJUnit(result);
+    expect(xml).toContain('failures="1"');
+    expect(xml).toContain('skipped="1"');
+    expect(xml).toContain('existing baseline finding');
   });
 });

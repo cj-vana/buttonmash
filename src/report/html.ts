@@ -15,6 +15,7 @@ const STYLE = `
 body{margin:0;font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0d1117;color:#e6edf3}
 header{padding:24px 32px;border-bottom:1px solid #21262d;background:#161b22}
 h1{margin:0 0 4px;font-size:20px}
+h2{margin:28px 0 12px;font-size:16px}
 .muted{color:#8b949e}
 .wrap{max-width:1100px;margin:0 auto;padding:24px 32px}
 .summary{display:flex;gap:12px;flex-wrap:wrap;margin:0 0 24px}
@@ -23,6 +24,7 @@ h1{margin:0 0 4px;font-size:20px}
 .badge{display:inline-block;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
 .critical{background:#67060c;color:#ffdcd7}.high{background:#7d1a1a;color:#ffd7d5}
 .medium{background:#7a5c00;color:#ffe9a8}.low{background:#1f3a5f;color:#cce3ff}.info{background:#30363d;color:#c9d1d9}
+.new{background:#1f6f3d;color:#d5ffe2}.updated{background:#7a4b00;color:#fff0c2}.existing{background:#30363d;color:#c9d1d9}.resolved{background:#164f63;color:#d2f4ff}.notobserved{background:#3f344d;color:#eadcff}
 .finding{border:1px solid #21262d;border-radius:10px;margin:0 0 14px;background:#161b22;overflow:hidden}
 .finding>summary{cursor:pointer;padding:14px 16px;display:flex;gap:10px;align-items:center;list-style:none}
 .finding>summary::-webkit-details-marker{display:none}
@@ -48,12 +50,19 @@ sum.appendChild(el('div','chip','<b>'+r.stats.actionsTaken+'</b><span class="mut
 sum.appendChild(el('div','chip','<b>'+r.stats.pagesVisited+'</b><span class="muted">pages</span>'));
 sum.appendChild(el('div','chip','<b>'+r.stats.statesDiscovered+'</b><span class="muted">states</span>'));
 sum.appendChild(el('div','chip','<b>'+r.findings.length+'</b><span class="muted">findings</span>'));
+if(r.baseline){
+  sum.appendChild(el('div','chip','<b>'+r.baseline.newFindings+'</b><span class="badge new">new</span>'));
+  sum.appendChild(el('div','chip','<b>'+r.baseline.updatedFindings+'</b><span class="badge updated">updated</span>'));
+  sum.appendChild(el('div','chip','<b>'+r.baseline.existingFindings+'</b><span class="badge existing">existing</span>'));
+  sum.appendChild(el('div','chip','<b>'+r.baseline.resolvedFindings.length+'</b><span class="badge resolved">resolved</span>'));
+  if(r.baseline.notObservedFindings.length) sum.appendChild(el('div','chip','<b>'+r.baseline.notObservedFindings.length+'</b><span class="badge notobserved">not observed</span>'));
+}
 for(const s of sevs){const n=r.stats.findingsBySeverity[s]||0; if(n) sum.appendChild(el('div','chip','<b>'+n+'</b><span class="badge '+s+'">'+s+'</span>'));}
 app.appendChild(sum);
 if(!r.findings.length){app.appendChild(el('div','empty','✓ No findings — the monkey could not break anything.'));}
 for(const f of r.findings){
   const d=el('details','finding'); const s=el('summary');
-  s.innerHTML='<span class="badge '+f.severity+'">'+f.severity+'</span><span class="title">'+esc(f.title)+'</span><span class="count">×'+f.count+'</span>';
+  s.innerHTML=(f.baselineState?'<span class="badge '+f.baselineState+'">'+f.baselineState+'</span>':'')+'<span class="badge '+f.severity+'">'+f.severity+'</span><span class="title">'+esc(f.title)+'</span><span class="count">×'+f.count+'</span>';
   d.appendChild(s);
   const b=el('div','body');
   b.appendChild(el('div','kv','category: '+esc(f.category)+' · url: '+esc(f.location.url)+(f.location.selector?' · selector: '+esc(f.location.selector):'')));
@@ -70,6 +79,28 @@ for(const f of r.findings){
     } else if(a.type==='trace'){ b.appendChild(el('div','kv','<a href="'+esc(a.path)+'">trace.zip</a> — open with: npx playwright show-trace '+esc(a.path))); }
   }
   d.appendChild(b); app.appendChild(d);
+}
+if(r.baseline && r.baseline.resolvedFindings.length){
+  app.appendChild(el('h2',null,'Resolved since baseline'));
+  for(const f of r.baseline.resolvedFindings){
+    const d=el('details','finding'); const s=el('summary');
+    s.innerHTML='<span class="badge resolved">resolved</span><span class="badge '+f.severity+'">'+f.severity+'</span><span class="title">'+esc(f.title)+'</span>';
+    d.appendChild(s);
+    const b=el('div','body');
+    b.appendChild(el('div','kv','category: '+esc(f.category)+' · url: '+esc(f.location.url)));
+    d.appendChild(b); app.appendChild(d);
+  }
+}
+if(r.baseline && r.baseline.notObservedFindings.length){
+  app.appendChild(el('h2',null,'Not observed (runs were not comparable)'));
+  for(const f of r.baseline.notObservedFindings){
+    const d=el('details','finding'); const s=el('summary');
+    s.innerHTML='<span class="badge notobserved">not observed</span><span class="badge '+f.severity+'">'+f.severity+'</span><span class="title">'+esc(f.title)+'</span>';
+    d.appendChild(s);
+    const b=el('div','body');
+    b.appendChild(el('div','kv','category: '+esc(f.category)+' · url: '+esc(f.location.url)));
+    d.appendChild(b); app.appendChild(d);
+  }
 }
 `;
 

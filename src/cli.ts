@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { Command } from 'commander';
 import pc from 'picocolors';
 
+import { BaselineError } from './baseline';
 import { loadConfig, ConfigError, type LoadOptions } from './config/load';
 import type { Config } from './config/schema';
 import { logger } from './core/logger';
@@ -42,6 +43,9 @@ interface RunOpts {
   billing?: 'refuse' | 'warn' | 'off';
   logLevel?: string;
   route?: string[];
+  baseline?: string;
+  baselineId?: string;
+  failOnNew?: boolean;
 }
 
 function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
@@ -69,6 +73,10 @@ function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
   }
   if (o.screenshots === false) report.captureScreenshots = false;
   if (Object.keys(report).length) ov.report = report;
+
+  if (o.baseline || o.baselineId || o.failOnNew) {
+    ov.baseline = { path: o.baseline, failOnNew: o.failOnNew, identity: o.baselineId };
+  }
 
   const guardrails: NonNullable<Config['guardrails']> = {};
   if (o.dryRun) guardrails.dryRun = true;
@@ -98,6 +106,14 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
   console.log(
     `  ${result.findings.length} findings${parts.length ? ': ' + parts.join(' · ') : ''}`,
   );
+  if (result.baseline) {
+    console.log(
+      `  Delta: ${result.baseline.newFindings} new · ${result.baseline.updatedFindings} updated · ${result.baseline.existingFindings} existing · ${result.baseline.resolvedFindings.length} resolved` +
+        (result.baseline.notObservedFindings.length
+          ? ` · ${result.baseline.notObservedFindings.length} not observed`
+          : ''),
+    );
+  }
   if (htmlReport) console.log(pc.dim(`  Report: ${resolve(outDir, 'report.html')}`));
   console.log(
     pc.dim(`  Reproduce: buttonmash run ${result.run.target} --seed ${result.config.seed}`),
@@ -127,7 +143,7 @@ async function doRun(
     process.exit(result.run.exitCode);
   } catch (err) {
     const message = (err as Error).message ?? String(err);
-    if (err instanceof ConfigError) {
+    if (err instanceof ConfigError || err instanceof BaselineError) {
       logger.error(message);
     } else if (/Executable doesn't exist|playwright install|browserType\.launch/i.test(message)) {
       logger.error('The browser is not installed.');
@@ -157,6 +173,9 @@ program
     '--fail-on <severity>',
     'min severity that fails the build (critical|high|medium|low|info)',
   )
+  .option('--baseline <results.json>', 'compare findings with a previous results.json')
+  .option('--baseline-id <id>', 'comparison identity for authenticated/header-dependent runs')
+  .option('--fail-on-new', 'fail only for new findings (requires a baseline)')
   .option('--dry-run', 'read-only mode: explore without submitting or mutating')
   .option('--auth <path>', 'Playwright storageState JSON for an authenticated session')
   .option('-o, --out <dir>', 'output directory for reports/artifacts')

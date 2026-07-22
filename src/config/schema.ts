@@ -243,35 +243,57 @@ const ReportSchema = z
   })
   .default({});
 
-export const ConfigSchema = z.object({
-  /** Start URL. Required, but may be supplied as the CLI argument instead. */
-  target: z.string().url().optional(),
-  /**
-   * Additional routes to sweep in the same run (paths relative to the target,
-   * or absolute same-origin URLs). The explorer rotates through target + these
-   * on every reset, so one run covers deep areas (dashboards, editors) that
-   * random clicking would rarely reach on its own.
-   */
-  routes: z.array(z.string()).default([]),
-  /** Reproducibility seed. Omit for a random (but printed) seed. */
-  seed: z.string().optional(),
-  browser: BrowserSchema.default('chromium'),
-  headless: z.boolean().default(true),
-  /** Extra HTTP headers sent with every request (auth proxies, feature flags).
-   *  Values support ${ENV_VAR} interpolation. */
-  headers: z.record(z.string()).default({}),
-  /** Emulate a device viewport, e.g. { width: 390, height: 844 } for mobile. */
-  viewport: ViewportSchema,
-  auth: AuthSchema,
-  budget: BudgetSchema,
-  explore: ExploreSchema,
-  guardrails: GuardrailsSchema,
-  detectors: DetectorsSchema,
-  report: ReportSchema,
-  /** Minimum finding severity that fails the build (exit code 1). */
-  failOn: SeveritySchema.default('high'),
-  logLevel: z.enum(['silent', 'error', 'warn', 'info', 'debug']).default('info'),
-});
+const BaselineSchema = z
+  .object({
+    /** Previous results.json used to classify findings across runs. */
+    path: z.string().min(1).optional(),
+    /** Fail only for new findings at/above `failOn`. Requires `path`. */
+    failOnNew: z.boolean().default(false),
+    /** Explicit comparison identity for authenticated/header-dependent runs. */
+    identity: z.string().min(1).optional(),
+  })
+  .default({});
+
+export const ConfigSchema = z
+  .object({
+    /** Start URL. Required, but may be supplied as the CLI argument instead. */
+    target: z.string().url().optional(),
+    /**
+     * Additional routes to sweep in the same run (paths relative to the target,
+     * or absolute same-origin URLs). The explorer rotates through target + these
+     * on every reset, so one run covers deep areas (dashboards, editors) that
+     * random clicking would rarely reach on its own.
+     */
+    routes: z.array(z.string()).default([]),
+    /** Reproducibility seed. Omit for a random (but printed) seed. */
+    seed: z.string().optional(),
+    browser: BrowserSchema.default('chromium'),
+    headless: z.boolean().default(true),
+    /** Extra HTTP headers sent with every request (auth proxies, feature flags).
+     *  Values support ${ENV_VAR} interpolation. */
+    headers: z.record(z.string()).default({}),
+    /** Emulate a device viewport, e.g. { width: 390, height: 844 } for mobile. */
+    viewport: ViewportSchema,
+    auth: AuthSchema,
+    budget: BudgetSchema,
+    explore: ExploreSchema,
+    guardrails: GuardrailsSchema,
+    detectors: DetectorsSchema,
+    report: ReportSchema,
+    baseline: BaselineSchema,
+    /** Minimum finding severity that fails the build (exit code 1). */
+    failOn: SeveritySchema.default('high'),
+    logLevel: z.enum(['silent', 'error', 'warn', 'info', 'debug']).default('info'),
+  })
+  .superRefine((cfg, ctx) => {
+    if (cfg.baseline.failOnNew && !cfg.baseline.path) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['baseline', 'path'],
+        message: 'is required when baseline.failOnNew is true',
+      });
+    }
+  });
 
 /** User-facing config type (all fields optional via defaults). */
 export type Config = z.input<typeof ConfigSchema>;

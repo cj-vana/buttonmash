@@ -228,6 +228,10 @@ export default defineConfig({
   },
 
   failOn: 'high',                   // critical | high | medium | low | info
+
+  // Compare with a previous results.json. With failOnNew enabled, known
+  // findings stay visible but only regressions fail the build.
+  // baseline: { path: 'previous-results.json', failOnNew: true, identity: 'staging-admin' },
 });
 ```
 
@@ -239,6 +243,9 @@ export default defineConfig({
 | `--route <url...>` | Extra route hints to sweep in the same run (crawl finds the rest) |
 | `--max-actions <n>` / `--max-duration <sec>` | Budget |
 | `--fail-on <severity>` | Min severity that fails the build (default `high`) |
+| `--baseline <results.json>` | Classify findings as new, existing, or resolved |
+| `--baseline-id <id>` | Assert the same user/tenant/header context across runs |
+| `--fail-on-new` | Fail only for new findings at/above the threshold |
 | `--dry-run` | Read-only: explore without submitting or mutating |
 | `--auth <path>` | Playwright storageState JSON |
 | `--billing <refuse\|warn\|off>` | Live-payment guard |
@@ -296,6 +303,30 @@ Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 (for GitHub code-scanning). On GitHub Actions it additionally emits inline
 `::error` annotations for the top findings and a markdown job summary — no
 setup needed. Exit codes follow the pytest/ESLint convention:
+
+### Baselines and incremental adoption
+
+Use a previous `results.json` to focus CI on regressions while keeping known
+problems visible:
+
+```bash
+npx buttonmash run https://staging.example.com \
+  --baseline previous-results.json \
+  --fail-on-new
+```
+
+JSON, HTML, terminal, and GitHub summaries classify current findings as **new**,
+severity-**updated**, or **existing**. An absent finding is called **resolved**
+only when both runs completed with the same exploration configuration; otherwise
+it is conservatively listed as **not observed**. JUnit failure counts and SARIF
+baseline states follow the same new-finding policy.
+`--fail-on-new` requires a baseline; without it, the normal severity-based exit
+behavior is unchanged.
+
+For authenticated runs or runs with custom headers, pass a stable non-secret
+`baseline.identity` / `--baseline-id` (for example `staging-admin`) to assert
+that both runs exercised the same user, tenant, and feature-flag context.
+Without that explicit identity, absent findings are never claimed as resolved.
 
 | Code | Meaning |
 |---|---|

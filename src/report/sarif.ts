@@ -39,6 +39,16 @@ export function toSarif(result: RunResult): string {
           return {
             ruleId: f.category,
             level: level(f.severity),
+            ...(f.baselineState
+              ? {
+                  baselineState:
+                    f.baselineState === 'existing'
+                      ? 'unchanged'
+                      : f.baselineState === 'updated'
+                        ? 'updated'
+                        : 'new',
+                }
+              : {}),
             message: { text: `${f.title} (seen ${f.count}×)` },
             locations: [
               {

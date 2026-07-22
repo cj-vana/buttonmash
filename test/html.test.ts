@@ -17,7 +17,13 @@ function result(over: Partial<RunResult['run']> & { seed?: string }): RunResult 
       exitCode: 0,
       dryRun: false,
     },
-    config: { seed: over.seed ?? 'seed', maxActions: 1, maxDurationMs: 1, failOn: 'high' },
+    config: {
+      seed: over.seed ?? 'seed',
+      maxActions: 1,
+      maxDurationMs: 1,
+      failOn: 'high',
+      failOnNew: false,
+    },
     stats: {
       actionsTaken: 0,
       pagesVisited: 0,
@@ -48,5 +54,31 @@ describe('html report', () => {
     const html = buildHtml(result({ target: 'http://x/</script><b>oops' }), '/tmp');
     // the < of any </script> inside the data blob must be unicode-escaped
     expect(html).not.toContain('</script><b>oops');
+  });
+
+  it('renders baseline delta counts and resolved findings', () => {
+    const report = result({});
+    report.baseline = {
+      source: 'previous.json',
+      comparable: true,
+      newFindings: 1,
+      updatedFindings: 0,
+      existingFindings: 2,
+      resolvedFindings: [
+        {
+          dedupKey: 'fixed',
+          severity: 'high',
+          category: 'js-error',
+          title: 'Fixed crash',
+          location: { url: 'https://example.test/fixed' },
+        },
+      ],
+      notObservedFindings: [],
+    };
+
+    const html = buildHtml(report, '/tmp');
+    expect(html).toContain('Resolved since baseline');
+    expect(html).toContain('"newFindings":1');
+    expect(html).toContain('Fixed crash');
   });
 });

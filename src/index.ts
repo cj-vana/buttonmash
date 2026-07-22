@@ -23,6 +23,7 @@ export { writeReports } from './report';
 export { redact, scanForSecrets } from './guardrails/secrets';
 export { classifyControl } from './guardrails/destructive';
 export { Rng } from './core/rng';
+export { compareWithBaseline, isFailingFinding, loadBaseline, BaselineError } from './baseline';
 export * from './core/types';
 export { version } from './version';
 

@@ -8,6 +8,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isFailingFinding } from '../baseline';
 import type { Finding, RunResult } from '../core/types';
 
 export function xmlEscape(s: string): string {
@@ -57,21 +58,32 @@ export function toJUnit(result: RunResult): string {
         .filter((a) => a.type === 'screenshot')
         .map((a) => `      <system-out>[[ATTACHMENT|${xmlEscape(a.path)}]]</system-out>\n`)
         .join('');
+      const failing = isFailingFinding(f, result.config.failOn, result.config.failOnNew ?? false);
+      const outcome = failing
+        ? `      <failure message="${msg}" type="${type}">${xmlEscape(reproText(f))}</failure>\n`
+        : `      <skipped message="${xmlEscape(
+            f.baselineState === 'existing'
+              ? 'existing baseline finding'
+              : `below ${result.config.failOn} failure threshold`,
+          )}"/>\n`;
       cases.push(
         `    <testcase name="${name}" classname="buttonmash.${xmlEscape(f.category)}" time="0">\n` +
-          `      <failure message="${msg}" type="${type}">${xmlEscape(reproText(f))}</failure>\n` +
+          outcome +
           attachments +
           `    </testcase>`,
       );
     }
   }
 
-  const failures = findings.length;
+  const failures = findings.filter((finding) =>
+    isFailingFinding(finding, result.config.failOn, result.config.failOnNew ?? false),
+  ).length;
+  const skipped = findings.length - failures;
   const total = Math.max(1, findings.length);
   return (
     `<?xml version="1.0" encoding="UTF-8"?>\n` +
-    `<testsuites name="${xmlEscape(suiteName)}" tests="${total}" failures="${failures}">\n` +
-    `  <testsuite name="${xmlEscape(suiteName)}" tests="${total}" failures="${failures}" timestamp="${result.run.startedAt}" time="${(result.run.durationMs / 1000).toFixed(3)}">\n` +
+    `<testsuites name="${xmlEscape(suiteName)}" tests="${total}" failures="${failures}" skipped="${skipped}">\n` +
+    `  <testsuite name="${xmlEscape(suiteName)}" tests="${total}" failures="${failures}" skipped="${skipped}" timestamp="${result.run.startedAt}" time="${(result.run.durationMs / 1000).toFixed(3)}">\n` +
     `${cases.join('\n')}\n` +
     `  </testsuite>\n` +
     `</testsuites>\n`

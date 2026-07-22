@@ -223,6 +223,10 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
     target,
     routes,
     seed: cfg.seed ?? makeDefaultSeed(),
+    baseline: {
+      ...cfg.baseline,
+      path: cfg.baseline.path ? resolve(cwd, cfg.baseline.path) : undefined,
+    },
     guardrails: { ...cfg.guardrails, allowedOrigins },
     configPath,
   };

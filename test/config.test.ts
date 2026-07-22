@@ -104,6 +104,26 @@ describe('loadConfig', () => {
       }),
     ).rejects.toBeInstanceOf(ConfigError);
   });
+
+  it('resolves a baseline path and requires one for fail-on-new mode', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      cwd: '/tmp/buttonmash-project',
+      overrides: {
+        target: 'https://x.test',
+        baseline: { path: 'reports/previous.json', failOnNew: true },
+      },
+    });
+    expect(cfg.baseline.path).toBe('/tmp/buttonmash-project/reports/previous.json');
+    expect(cfg.baseline.failOnNew).toBe(true);
+
+    await expect(
+      loadConfig({
+        ignoreConfigFile: true,
+        overrides: { target: 'https://x.test', baseline: { failOnNew: true } },
+      }),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
 });
 
 describe('additive CLI lists and credential hygiene', () => {
