@@ -1,0 +1,36 @@
+name: Cross-browser smoke
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: browser-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: ${{ matrix.browser }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, webkit]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Run bounded browser smoke
+        run: npx vitest run test/browser-smoke.test.ts
+        env:
+          BUTTONMASH_SMOKE_BROWSER: ${{ matrix.browser }}
+          CI: 'true'
