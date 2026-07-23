@@ -64,7 +64,7 @@ runs:
       shell: bash
       # Run from the workspace so a committed buttonmash.config.* is discovered
       # and repo-relative --config paths resolve. Inputs go through env, never
-      # interpolated into the script — ${{ }} expands before bash sees the
+      # interpolated into the script, because ${{ }} expands before bash sees the
       # text, so a crafted `target` would otherwise execute on the runner.
       working-directory: ${{ github.workspace }}
       env:
