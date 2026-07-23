@@ -21,7 +21,10 @@ screen, a broken image…) it writes a report and **fails your build**.
 
 It's deterministic (seeded, so any failure replays), bounded (action/time
 budgets), and **safe by default**: it stays on your origin, skips destructive
-controls, refuses to run against live payment keys, and redacts secrets.
+controls, refuses to run against live payment keys, and redacts secrets. And you
+don't have to fix every existing bug before the gate is useful:
+[baseline them](#adopting-on-an-app-that-already-has-bugs) and only **new**
+breakage fails the build.
 
 ```bash
 npx buttonmash run https://staging.example.com
@@ -134,6 +137,32 @@ jobs:
 
 buttonmash auto-detects GitHub Actions and emits inline annotations plus a job-summary
 table. The non-zero exit code fails the job.
+
+## Adopting on an app that already has bugs
+
+The first sweep of a real app usually finds things — some of them years old.
+That shouldn't mean fixing everything before the gate earns its keep. Run once,
+keep the `results.json`, and pass it back as a baseline: known findings stay
+visible in every report, but only **new** breakage fails the build.
+
+```bash
+npx buttonmash run https://staging.example.com \
+  --baseline previous-results.json \
+  --fail-on-new
+```
+
+JSON, HTML, terminal, and GitHub summaries classify current findings as **new**,
+severity-**updated**, or **existing**. An absent finding is called **resolved**
+only when both runs completed with the same exploration configuration; otherwise
+it is conservatively listed as **not observed**. JUnit failure counts and SARIF
+baseline states follow the same new-finding policy.
+`--fail-on-new` requires a baseline; without it, the normal severity-based exit
+behavior is unchanged.
+
+For authenticated runs or runs with custom headers, pass a stable non-secret
+`baseline.identity` / `--baseline-id` (for example `staging-admin`) to assert
+that both runs exercised the same user, tenant, and feature-flag context.
+Without that explicit identity, absent findings are never claimed as resolved.
 
 ## Crawling the whole site
 
@@ -320,30 +349,6 @@ Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 (for GitHub code-scanning). On GitHub Actions it additionally emits inline
 `::error` annotations for the top findings and a markdown job summary — no
 setup needed. Exit codes follow the pytest/ESLint convention:
-
-### Baselines and incremental adoption
-
-Use a previous `results.json` to focus CI on regressions while keeping known
-problems visible:
-
-```bash
-npx buttonmash run https://staging.example.com \
-  --baseline previous-results.json \
-  --fail-on-new
-```
-
-JSON, HTML, terminal, and GitHub summaries classify current findings as **new**,
-severity-**updated**, or **existing**. An absent finding is called **resolved**
-only when both runs completed with the same exploration configuration; otherwise
-it is conservatively listed as **not observed**. JUnit failure counts and SARIF
-baseline states follow the same new-finding policy.
-`--fail-on-new` requires a baseline; without it, the normal severity-based exit
-behavior is unchanged.
-
-For authenticated runs or runs with custom headers, pass a stable non-secret
-`baseline.identity` / `--baseline-id` (for example `staging-admin`) to assert
-that both runs exercised the same user, tenant, and feature-flag context.
-Without that explicit identity, absent findings are never claimed as resolved.
 
 | Code | Meaning |
 |---|---|
