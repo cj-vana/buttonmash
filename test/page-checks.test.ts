@@ -137,8 +137,18 @@ describe('page checks', () => {
       .mockResolvedValueOnce(undefined)
       .mockResolvedValueOnce({
         violations: [
-          { id: 'button-name', help: 'Buttons must have discernible text', impact: 'critical', nodes: [{}] },
-          { id: 'color-contrast', help: 'Elements must meet contrast ratio', impact: 'serious', nodes: [{}, {}] },
+          {
+            id: 'button-name',
+            help: 'Buttons must have discernible text',
+            impact: 'critical',
+            nodes: [{}],
+          },
+          {
+            id: 'color-contrast',
+            help: 'Elements must meet contrast ratio',
+            impact: 'serious',
+            nodes: [{}, {}],
+          },
           { id: 'region', help: 'Content should be in landmarks', impact: 'moderate', nodes: [{}] },
         ],
       });
