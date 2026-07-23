@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Page } from 'playwright';
 
 import { loadConfig, type ResolvedConfig } from '../src/config/load';
-import { runPageChecks, type DetectorState } from '../src/detectors/page-checks';
+import { addCanary, runPageChecks, type DetectorState } from '../src/detectors/page-checks';
 import { SignalRecorder } from '../src/detectors/recorder';
 
 let cfg: ResolvedConfig;
@@ -122,5 +122,101 @@ describe('page checks', () => {
       ),
     ).resolves.toBeUndefined();
     expect(recorder.signals).toHaveLength(0);
+  });
+
+  it('reports serious and critical axe violations when a11y is enabled', async () => {
+    cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: 'https://app.test', detectors: { a11y: true } },
+    });
+    const evaluate = vi
+      .fn()
+      // domCheck → globals probe → axe inject → axe run
+      .mockResolvedValueOnce({ blank: false, brokenImages: [], overlay: null })
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce({
+        violations: [
+          { id: 'button-name', help: 'Buttons must have discernible text', impact: 'critical', nodes: [{}] },
+          { id: 'color-contrast', help: 'Elements must meet contrast ratio', impact: 'serious', nodes: [{}, {}] },
+          { id: 'region', help: 'Content should be in landmarks', impact: 'moderate', nodes: [{}] },
+        ],
+      });
+    const page = {
+      evaluate,
+      content: vi.fn().mockResolvedValue('<main>fine</main>'),
+      $$eval: vi.fn().mockResolvedValue(''),
+      url: vi.fn().mockReturnValue('https://app.test/'),
+    } as unknown as Page;
+
+    await runPageChecks(
+      {
+        page,
+        recorder,
+        cfg,
+        state,
+        markBillingLive: vi.fn(),
+        customDom: [],
+        customUrl: [],
+        timeLeftMs: 60_000,
+      },
+      true,
+    );
+
+    const a11y = recorder.signals.filter((signal) => signal.kind === 'a11y');
+    expect(a11y).toHaveLength(2);
+    expect(a11y[0].severity).toBe('high');
+    expect(a11y[0].detail).toContain('button-name');
+    expect(a11y[1].severity).toBe('medium');
+    expect(a11y[1].detail).toContain('color-contrast');
+  });
+
+  it('skips the axe scan when the remaining time budget is low', async () => {
+    cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: 'https://app.test', detectors: { a11y: true } },
+    });
+    const evaluate = vi
+      .fn()
+      .mockResolvedValueOnce({ blank: false, brokenImages: [], overlay: null })
+      .mockResolvedValueOnce('');
+    const page = {
+      evaluate,
+      content: vi.fn().mockResolvedValue('<main>fine</main>'),
+      $$eval: vi.fn().mockResolvedValue(''),
+      url: vi.fn().mockReturnValue('https://app.test/'),
+    } as unknown as Page;
+
+    await runPageChecks(
+      {
+        page,
+        recorder,
+        cfg,
+        state,
+        markBillingLive: vi.fn(),
+        customDom: [],
+        customUrl: [],
+        timeLeftMs: 10_000,
+      },
+      true,
+    );
+
+    expect(recorder.signals.filter((signal) => signal.kind === 'a11y')).toHaveLength(0);
+    // domCheck + globals probe only; no axe inject/run calls.
+    expect(evaluate).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('addCanary', () => {
+  it('tracks canaries and evicts the oldest beyond the bound', () => {
+    const s: DetectorState = { pendingCanaries: new Set(), seenBrokenImages: new Set() };
+    for (let i = 0; i < 200; i++) addCanary(s, `bm-${i}`);
+    expect(s.pendingCanaries.size).toBe(200);
+
+    addCanary(s, 'bm-newest');
+    expect(s.pendingCanaries.size).toBe(200);
+    expect(s.pendingCanaries.has('bm-0')).toBe(false);
+    expect(s.pendingCanaries.has('bm-1')).toBe(true);
+    expect(s.pendingCanaries.has('bm-newest')).toBe(true);
   });
 });
