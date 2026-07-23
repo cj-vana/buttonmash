@@ -105,7 +105,10 @@ jobs:
         with:
           target: http://127.0.0.1:4173
           version: file:${{ steps.package.outputs.path }}
-          args: --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
+          # Pinned seed: with a random seed the monkey can pick `back` as an
+          # early action, land on about:blank, and log a low-severity guardrail
+          # finding — failing the findings=0 assertion below.
+          args: --seed ci --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
           upload-report: 'false'
 
       - name: Verify action outputs

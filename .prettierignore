@@ -2,3 +2,5 @@ dist
 coverage
 node_modules
 *.md
+# generated demo report published on GitHub Pages
+docs
