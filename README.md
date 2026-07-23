@@ -8,7 +8,10 @@
 
 **[▶ See a real report](https://cj-vana.github.io/buttonmash/)**, the
 self-contained `report.html` from a run against the bundled
-[buggy demo app](./examples/buggy-app/), hosted as-is.
+[buggy demo app](./examples/buggy-app/), hosted as-is. Or read the
+**[field test](https://github.com/cj-vana/buttonmash/blob/main/docs/case-study.md)**:
+we pointed it at Excalidraw, JSON Crack, and TodoMVC. It found a real bug in
+one, passed another clean, and needed two minutes of tuning to get there.
 
 **A CI chaos monkey for web apps.** Point it at your site and it **crawls every
 page on its own**, discovering links and in-app (SPA) navigations as it goes,
@@ -46,6 +49,32 @@ owns the verdict and the exit code. It also enumerates real elements (so it hits
 buttons below the fold, unlike coordinate-based clickers), dispatches **trusted**
 input, and deduplicates findings into an actionable report with a reproducible
 seed.
+
+## buttonmash vs. gremlins.js
+
+[gremlins.js](https://github.com/marmelab/gremlins.js) pioneered monkey testing
+on the web, and it is still the fastest way to set chaos loose on a page you
+don't own the infrastructure for: it runs from a script tag or bookmarklet in
+any browser with zero setup. It is also dormant (last release June 2022, last
+commit March 2023). buttonmash is built for a different job: running in CI and
+deciding whether the build passes.
+
+|  | gremlins.js | buttonmash |
+| --- | --- | --- |
+| Runs | inside the page: script tag, bookmarklet, or injected into Cypress/Playwright | from a Playwright harness that owns the browser |
+| CI verdict | logs errors to the console; the gizmo mogwai stops the horde after 10 errors | exits `1` at your severity threshold and fails the build |
+| Targeting | coordinate-based clicks and touches anywhere on the viewport | enumerates real buttons/links/inputs, including below the fold, in open shadow DOM, and in same-origin iframes |
+| Coverage | the page you loaded it on | crawls the whole origin: links, SPA routes, hash routers |
+| Forms | types random values | completes create-flows with valid, deterministic values and submits only safe forms |
+| Safety | none built in; anything on the page can be clicked | skips destructive controls, stays on origin, refuses live billing, dismisses confirms |
+| Reproducibility | seedable RNG (`gremlins.Chance`) | one seed drives everything, including in-page `Math.random`, printed and embedded in every report |
+| Output | console log | deduplicated findings with repro traces in JSON, JUnit, HTML, and SARIF, plus baselines |
+| Setup | none | Node 20+ and a Playwright browser download |
+
+If you want to poke a page interactively right now, gremlins.js is still great.
+If you want a monkey that runs on every pull request and blocks the ones that
+break things, that's buttonmash. They also stack: gremlins in the browser while
+developing, buttonmash as the gate in CI.
 
 ## Install
 

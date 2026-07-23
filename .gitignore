@@ -11,8 +11,8 @@ coverage/
 # buttonmash run output (reports + artifacts)
 buttonmash-report/
 artifacts/
-# …except the published demo report on GitHub Pages
-!docs/artifacts/
+# …except the published demo reports on GitHub Pages
+!docs/**/artifacts/
 
 # Captured auth sessions — NEVER commit (contains cookies + tokens)
 playwright/.auth/
