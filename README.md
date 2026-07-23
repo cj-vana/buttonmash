@@ -4,6 +4,12 @@
 [![npm](https://img.shields.io/npm/v/buttonmash.svg)](https://www.npmjs.com/package/buttonmash)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
 
+![One buttonmash run: the CLI starts, the monkey mashes the demo app, the build fails red](https://raw.githubusercontent.com/cj-vana/buttonmash/main/docs/demo.gif)
+
+**[▶ See a real report](https://cj-vana.github.io/buttonmash/)** — the
+self-contained `report.html` from a run against the bundled
+[buggy demo app](./examples/buggy-app/), hosted as-is.
+
 **A CI chaos monkey for web apps.** Point it at your site and it **crawls every
 page on its own** — discovering links and in-app (SPA) navigations as it goes —
 then on each page finds every button/link/input and mashes them: clicking,
@@ -309,7 +315,8 @@ buttonmash is built to break things without breaking *you*:
 ## Reports & exit codes
 
 Every run writes `results.json` (the source of truth). Optionally `junit.xml`
-(for CI test rendering), a self-contained `report.html`, and `results.sarif`
+(for CI test rendering), a self-contained `report.html`
+([live example](https://cj-vana.github.io/buttonmash/)), and `results.sarif`
 (for GitHub code-scanning). On GitHub Actions it additionally emits inline
 `::error` annotations for the top findings and a markdown job summary — no
 setup needed. Exit codes follow the pytest/ESLint convention:
