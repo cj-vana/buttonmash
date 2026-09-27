@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config/load';
 
@@ -179,5 +183,24 @@ describe('additive CLI lists and credential hygiene', () => {
     });
     expect(cfg.target).toBe('https://staging.example.com/app');
     expect(cfg.auth.basicAuth).toEqual({ username: 'admin', password: 'hunter2' });
+  });
+});
+
+describe('config files', () => {
+  it("resolve `import ... from 'buttonmash'` without a local install", async () => {
+    // The composite action installs buttonmash outside the workspace, so the
+    // import in a scaffolded config has no node_modules to resolve from.
+    const workspace = mkdtempSync(join(tmpdir(), 'buttonmash-workspace-'));
+    try {
+      writeFileSync(
+        join(workspace, 'buttonmash.config.ts'),
+        "import { defineConfig } from 'buttonmash';\n" +
+          "export default defineConfig({ target: 'https://x.test', failOn: 'medium' });\n",
+      );
+      const cfg = await loadConfig({ cwd: workspace });
+      expect(cfg.failOn).toBe('medium');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 });

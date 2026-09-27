@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url';
 
 import { logger } from '../core/logger';
 import { makeDefaultSeed } from '../core/rng';
+import { packageRoot } from '../version';
 import { ConfigSchema, type Config, type ParsedConfig } from './schema';
 
 /** Thrown for bad config / usage; the CLI maps this to exit code 2. */
@@ -56,7 +57,12 @@ async function loadConfigFile(path: string): Promise<Config> {
   // TS / ESM / CJS — load via jiti so .ts works without a build step.
   try {
     const { createJiti } = await import('jiti');
-    const jiti = createJiti(pathToFileURL(__filenameSafe()).href);
+    // `import { defineConfig } from 'buttonmash'` resolves to the running copy:
+    // the GitHub Action installs buttonmash outside the workspace, where the
+    // config file would otherwise find no package to import.
+    const jiti = createJiti(pathToFileURL(__filenameSafe()).href, {
+      alias: { buttonmash: packageRoot },
+    });
     const mod = (await jiti.import(path)) as { default?: Config } & Config;
     return (mod.default ?? mod) as Config;
   } catch (err) {
