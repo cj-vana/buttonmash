@@ -138,7 +138,7 @@ export async function installContextFence(
     try {
       const u = new URL(req.url());
       origin = u.origin;
-      host = u.host;
+      host = u.hostname;
       pathname = u.pathname;
     } catch {
       return route.continue();
