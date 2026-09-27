@@ -38,6 +38,50 @@ describe('billing live-mode detection', () => {
   });
 });
 
+describe('isPaymentHost', () => {
+  it('matches processor domains and their subdomains', () => {
+    for (const host of [
+      'api.stripe.com',
+      'js.stripe.com',
+      'm.stripe.network',
+      'www.paypal.com',
+      'www.sandbox.paypal.com',
+      'www.paypalobjects.com',
+      'api.braintreegateway.com',
+      'payments.braintree-api.com',
+      'checkoutshopper-live.adyen.com',
+      'pci-connect.squareup.com',
+      'connect.squareupsandbox.com',
+      'web.squarecdn.com',
+      'api.checkout.com',
+      'api.sandbox.checkout.com',
+    ]) {
+      expect(isPaymentHost(host), host).toBe(true);
+    }
+  });
+
+  it('does not match an app host that only contains a processor word', () => {
+    for (const host of [
+      'checkout.acme.test',
+      'shop.paypal.example',
+      'stripe.acme.test',
+      'notstripe.com',
+      'stripe.com.evil.test',
+      'mycheckout.com',
+    ]) {
+      expect(isPaymentHost(host), host).toBe(false);
+    }
+  });
+
+  it('only reads live keys from requests to Stripe itself', () => {
+    const body = 'key=pk_live_aaaaaaaaaaaaaaaaaaaa';
+    expect(inspectRequestForLiveMode('https://notstripe.com/v1/tokens', body)).toEqual([]);
+    expect(inspectRequestForLiveMode('https://api.stripe.com/v1/tokens', body)).toEqual([
+      'live-key-in-request:stripe-pk-live',
+    ]);
+  });
+});
+
 describe('key length bounds', () => {
   it('detects live keys longer than 99 chars (the old {10,99} matched nothing)', async () => {
     const { scanTextForLiveMode } = await import('../src/guardrails/billing');

@@ -50,8 +50,25 @@ export const SANDBOX_HOSTS = new Set([
   'checkout-test.adyen.com',
 ]);
 
-/** api.stripe.com is shared by test & live; decide by the key in the request. */
-const STRIPE_HOSTS = new Set(['api.stripe.com', 'r.stripe.com']);
+/** Registrable domains of payment processors. Matching processor words
+ *  anywhere in the host also caught the app's own `checkout.acme.test`. */
+const PAYMENT_DOMAINS = [
+  'stripe.com',
+  'stripe.network',
+  'paypal.com',
+  'paypalobjects.com',
+  'braintreegateway.com',
+  'braintree-api.com',
+  'adyen.com',
+  'squareup.com',
+  'squareupsandbox.com',
+  'squarecdn.com',
+  'checkout.com',
+];
+
+function onDomain(hostname: string, domain: string): boolean {
+  return hostname === domain || hostname.endsWith(`.${domain}`);
+}
 
 /** Detect live-mode evidence in a blob of page text (HTML + scripts + globals). */
 export function scanTextForLiveMode(text: string): string[] {
@@ -67,13 +84,14 @@ export function inspectRequestForLiveMode(url: string, postData: string | null):
   const reasons: string[] = [];
   let host = '';
   try {
-    host = new URL(url).host;
+    host = new URL(url).hostname;
   } catch {
     return reasons;
   }
   if (LIVE_HOSTS.has(host)) reasons.push(`live-host:${host}`);
   const haystack = `${url}\n${postData ?? ''}`;
-  if (STRIPE_HOSTS.has(host) || host.endsWith('stripe.com')) {
+  // api.stripe.com serves test and live mode alike; the key decides.
+  if (onDomain(host, 'stripe.com')) {
     for (const { id, re } of LIVE_MODE_PATTERNS) {
       if (re.test(haystack)) reasons.push(`live-key-in-request:${id}`);
     }
@@ -81,12 +99,8 @@ export function inspectRequestForLiveMode(url: string, postData: string | null):
   return reasons;
 }
 
-/** True if a host looks payment-related at all (for tagging payment subtrees). */
-export function isPaymentHost(host: string): boolean {
-  return (
-    STRIPE_HOSTS.has(host) ||
-    LIVE_HOSTS.has(host) ||
-    SANDBOX_HOSTS.has(host) ||
-    /(?:paypal|braintree|adyen|squareup|stripe|checkout)\./.test(host)
-  );
+/** True if a hostname (no port) belongs to a payment processor. */
+export function isPaymentHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/\.$/, '');
+  return PAYMENT_DOMAINS.some((domain) => onDomain(h, domain));
 }
