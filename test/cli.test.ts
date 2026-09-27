@@ -50,6 +50,25 @@ describe('CLI contract', () => {
     expect(result.stdout).toContain('replay');
   });
 
+  it('exits 2 for command-line usage errors, which exit 1 would report as findings', () => {
+    for (const args of [
+      ['run', 'https://x.test', '--bogus'],
+      ['run', 'https://x.test', '--max-actions'],
+      ['replay'],
+      ['doctor', 'https://x.test', '--bogus'],
+    ]) {
+      const result = run(args);
+      expect(result.status, args.join(' ')).toBe(2);
+      expect(result.stderr, args.join(' ')).toMatch(/^error: /m);
+    }
+  });
+
+  it('keeps exit 0 for --help and --version', () => {
+    for (const args of [['--help'], ['--version'], ['run', '--help']]) {
+      expect(run(args).status, args.join(' ')).toBe(0);
+    }
+  });
+
   it('uses exit code 2 for invalid usage before launching a browser', () => {
     const result = run(['run', 'https://example.test', '--fail-on', 'apocalyptic']);
     expect(result.status).toBe(2);
