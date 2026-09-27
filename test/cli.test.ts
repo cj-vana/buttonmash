@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createProgram } from '../src/cli-program';
+import { loadConfig } from '../src/config/load';
 import { startServer, type TestServer } from './helpers/server';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -110,6 +111,20 @@ describe('CLI contract', () => {
     const second = run(['init'], directory);
     expect(second.status).toBe(2);
     expect(second.stderr).toContain('already exists');
+  });
+
+  it('scaffolds a config that loads without an auth file that does not exist yet', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-cli-'));
+    temporaryDirectories.push(directory);
+    expect(run(['init'], directory).status).toBe(0);
+
+    const cfg = await loadConfig({ cwd: directory });
+    expect(cfg.auth.storageState).toBeUndefined();
+    const scaffold = readFileSync(join(directory, 'buttonmash.config.ts'), 'utf8');
+    expect(scaffold).toContain('buttonmash auth <login-url>');
+    expect(scaffold).toMatch(
+      /^\s*\/\/ auth: \{ storageState: 'playwright\/\.auth\/user\.json' \},$/m,
+    );
   });
 });
 
