@@ -16,7 +16,7 @@ import { launchBrowser, type Engine } from './browser';
 /** Validate that a storageState file exists and looks like one. Warn, don't throw. */
 export async function validateStorageState(path: string): Promise<boolean> {
   if (!existsSync(path)) {
-    logger.warn(`Auth file not found: ${path} — running unauthenticated.`);
+    logger.warn(`Auth file not found: ${path}`);
     return false;
   }
   try {

@@ -161,12 +161,18 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
 
   // Interpolate ${ENV_VAR} in credentials/headers so secrets stay out of config.
   // A missing variable is fatal: substituting '' would log in with an empty
-  // password or send an empty Authorization header for the whole run.
+  // password or send an empty Authorization header for the whole run. Empty
+  // counts as missing, since GitHub Actions passes an absent secret as ''.
   const interp = (s: string, field: string): string =>
     s.replace(/\$\{(\w+)\}/g, (_m, k: string) => {
       const v = process.env[k];
       if (v === undefined) {
         throw new ConfigError(`${field} references \${${k}}, but ${k} is not set.`);
+      }
+      if (v === '') {
+        throw new ConfigError(
+          `${field} references \${${k}}, but ${k} is empty (a CI secret that was never set?).`,
+        );
       }
       return v;
     });
