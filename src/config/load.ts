@@ -103,12 +103,14 @@ function deepMerge<T>(base: T, over: Partial<T> | undefined): T {
 }
 
 export interface LoadOptions {
-  /** Explicit config file path (skips discovery). */
+  /** Explicit config file path (skips discovery). Loaded even when
+   *  `ignoreConfigFile` is set. */
   configPath?: string;
   /** CLI-derived overrides applied on top of the file. */
   overrides?: Partial<Config>;
   cwd?: string;
-  /** Skip config-file discovery entirely (for programmatic use). */
+  /** Skip config-file discovery (for programmatic use). An explicit
+   *  `configPath` still loads. */
   ignoreConfigFile?: boolean;
   /** List flags documented as *additive* (`--route`, `--allow-origin`): these
    *  append to the file's lists instead of replacing them like `overrides`
@@ -122,10 +124,11 @@ export interface LoadOptions {
  */
 export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig> {
   const cwd = opts.cwd ?? process.cwd();
-  const configPath = opts.ignoreConfigFile
-    ? undefined
-    : opts.configPath
-      ? resolve(cwd, opts.configPath)
+  // An explicit path always loads; ignoreConfigFile only turns off discovery.
+  const configPath = opts.configPath
+    ? resolve(cwd, opts.configPath)
+    : opts.ignoreConfigFile
+      ? undefined
       : findConfigFile(cwd);
 
   if (opts.configPath && !existsSync(configPath!)) {

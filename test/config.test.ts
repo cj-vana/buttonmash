@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config/load';
+import { buttonmash } from '../src/index';
 
 describe('loadConfig', () => {
   it('resolves defaults and derives the origin allowlist from the target', async () => {
@@ -314,6 +315,37 @@ describe('config files', () => {
       );
       const cfg = await loadConfig({ cwd: workspace });
       expect(cfg.failOn).toBe('medium');
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('load an explicit configPath even when discovery is off', async () => {
+    const workspace = mkdtempSync(join(tmpdir(), 'buttonmash-workspace-'));
+    try {
+      const path = join(workspace, 'custom.json');
+      writeFileSync(path, JSON.stringify({ failOn: 'medium' }));
+      const cfg = await loadConfig({
+        ignoreConfigFile: true,
+        configPath: path,
+        overrides: { target: 'https://x.test' },
+      });
+      expect(cfg.failOn).toBe('medium');
+      expect(cfg.configPath).toBe(path);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('buttonmash(config, { configPath }) reads that file', async () => {
+    // An invalid value in the file proves it was loaded, without launching a browser.
+    const workspace = mkdtempSync(join(tmpdir(), 'buttonmash-workspace-'));
+    try {
+      const path = join(workspace, 'custom.json');
+      writeFileSync(path, JSON.stringify({ failOn: 'apocalyptic' }));
+      await expect(buttonmash({ target: 'https://x.test' }, { configPath: path })).rejects.toThrow(
+        /Invalid configuration:\n {2}- failOn/,
+      );
     } finally {
       rmSync(workspace, { recursive: true, force: true });
     }

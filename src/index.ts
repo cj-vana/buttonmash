@@ -31,8 +31,10 @@ export { version } from './version';
 
 /**
  * One-call convenience: resolve config from an object, run the monkey, write
- * reports, and return the result (with `result.run.exitCode`). Ignores any
- * `buttonmash.config.*` on disk unless you pass `loadOptions`.
+ * reports, and return the result (with `result.run.exitCode`). Does not look
+ * for a `buttonmash.config.*` on disk: pass `loadOptions.configPath` to load a
+ * file (the `config` object overrides it), or `ignoreConfigFile: false` to
+ * discover one in `loadOptions.cwd`.
  */
 export async function buttonmash(
   config: Config,
