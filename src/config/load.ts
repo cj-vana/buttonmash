@@ -158,23 +158,29 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
   const cfg = parsed.data;
 
   // Interpolate ${ENV_VAR} in credentials/headers so secrets stay out of config.
-  // A missing variable is loud: silently substituting '' means logging in with
-  // an empty password and burning the whole budget against the login page.
-  const interp = (s: string): string =>
+  // A missing variable is fatal: substituting '' would log in with an empty
+  // password or send an empty Authorization header for the whole run.
+  const interp = (s: string, field: string): string =>
     s.replace(/\$\{(\w+)\}/g, (_m, k: string) => {
       const v = process.env[k];
-      if (v === undefined) logger.warn(`Config references \${${k}} but it is not set — using ''.`);
-      return v ?? '';
+      if (v === undefined) {
+        throw new ConfigError(`${field} references \${${k}}, but ${k} is not set.`);
+      }
+      return v;
     });
   if (cfg.auth.loginScript) {
-    cfg.auth.loginScript.username = interp(cfg.auth.loginScript.username);
-    cfg.auth.loginScript.password = interp(cfg.auth.loginScript.password);
+    const ls = cfg.auth.loginScript;
+    ls.username = interp(ls.username, 'auth.loginScript.username');
+    ls.password = interp(ls.password, 'auth.loginScript.password');
   }
   if (cfg.auth.basicAuth) {
-    cfg.auth.basicAuth.username = interp(cfg.auth.basicAuth.username);
-    cfg.auth.basicAuth.password = interp(cfg.auth.basicAuth.password);
+    const ba = cfg.auth.basicAuth;
+    ba.username = interp(ba.username, 'auth.basicAuth.username');
+    ba.password = interp(ba.password, 'auth.basicAuth.password');
   }
-  for (const k of Object.keys(cfg.headers)) cfg.headers[k] = interp(cfg.headers[k]!);
+  for (const k of Object.keys(cfg.headers)) {
+    cfg.headers[k] = interp(cfg.headers[k]!, `headers.${k}`);
+  }
 
   let target: string | undefined = cfg.target;
   if (!target) {
