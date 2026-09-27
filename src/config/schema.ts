@@ -55,9 +55,12 @@ const AuthSchema = z
      *  re-authenticates if the session drops mid-run. */
     loginScript: LoginScriptSchema.optional(),
     /** Regex (string) for URLs that indicate a logged-out / login page. Used to
-     *  detect a session drop mid-run (only when auth is configured). */
+     *  detect a session drop mid-run (only when auth is configured). Tested
+     *  against the pathname plus any hash route. The default matches a whole
+     *  path segment (login, log-in, signin, sign_in, sso, wp-login.php), so
+     *  /settings/login-history or /docs/signing-keys are not login pages. */
     loginUrlPattern: RegexSchema.default(
-      '(log[-_]?in|sign[-_]?in|/login\\b|/signin\\b|auth/login|/sso\\b)',
+      '(?:^|/)(?:wp-)?(?:log[-_]?in|sign[-_]?in|sso)(?:[.][a-z]+)?(?:[/?#]|$)',
     ),
   })
   .default({});

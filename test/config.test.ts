@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 import { loadConfig, ConfigError } from '../src/config/load';
+import { ConfigSchema } from '../src/config/schema';
+import { routePath } from '../src/core/hash';
 import { buttonmash } from '../src/index';
 
 describe('loadConfig', () => {
@@ -199,6 +201,46 @@ describe('loadConfig', () => {
         overrides: { target: 'https://x.test', baseline: { failOnNew: true } },
       }),
     ).rejects.toBeInstanceOf(ConfigError);
+  });
+});
+
+describe('default auth.loginUrlPattern', () => {
+  const pattern = new RegExp(ConfigSchema.parse({}).auth.loginUrlPattern, 'i');
+  // The runner and doctor test it against routePath: pathname plus a hash route.
+  const routeOf = (path: string) => routePath(new URL(path, 'https://x.test'));
+
+  it.each([
+    '/login',
+    '/log-in',
+    '/Login',
+    '/login/',
+    '/signin',
+    '/sign-in',
+    '/sign_in',
+    '/users/sign_in',
+    '/auth/login',
+    '/sso',
+    '/login?next=/x',
+    '/login.php',
+    '/wp-login.php?redirect_to=/wp-admin/',
+    '/#/login',
+    '/#/login?next=/x',
+    '/app#!/signin',
+  ])('treats %s as a login page', (path) => {
+    expect(pattern.test(routeOf(path))).toBe(true);
+    expect(pattern.test(path)).toBe(true);
+  });
+
+  it.each([
+    '/blog/designing-apis',
+    '/tasks/assigning',
+    '/settings/login-history',
+    '/docs/signing-keys',
+    '/features/single-sign-on',
+    '/#/settings/login-history',
+  ])('does not treat %s as a login page', (path) => {
+    expect(pattern.test(routeOf(path))).toBe(false);
+    expect(pattern.test(path)).toBe(false);
   });
 });
 
