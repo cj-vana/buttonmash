@@ -126,8 +126,9 @@ the rough edges they show are fixed in 0.3.0:
   Chromium, Firefox or WebKit. That echo was all five of JSON Crack's
   first-run high findings.
 - A control whose click times out is skipped for the rest of the run on that
-  page. In the Excalidraw run, 22 clicks each waited out the 4-second timeout
-  on toolbar buttons under the canvas layer; now each costs one timeout.
+  page. The Excalidraw report records 27 clicks and double-clicks that each
+  waited out the 4-second timeout, repeats on 11 controls the canvas layer
+  covered; now each of those controls costs one timeout per page.
 - "Reset zoom" and similar names can be exempted with
   `destructive.safeNames`, and agent nouns such as "Eraser" no longer match a
   verb like "erase".
