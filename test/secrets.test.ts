@@ -38,6 +38,25 @@ describe('secret rule bounds', () => {
     expect(scanForSecrets(long).map((h) => h.ruleId)).toContain('stripe-secret-key');
   });
 
+  it('redacts a whole PEM private key, body and END line included', () => {
+    const line = 'MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun';
+    const pem = [
+      '-----BEGIN RSA PRIVATE KEY-----',
+      line,
+      [...line].reverse().join(''),
+      '-----END RSA PRIVATE KEY-----',
+    ].join('\n');
+    const { redacted } = redact(`config loaded: ${pem} done`);
+    expect(redacted).toBe('config loaded: [REDACTED:private-key] done');
+    expect(scanForSecrets(pem).map((h) => h.ruleId)).toContain('private-key');
+  });
+
+  it('redacts the body of a PEM key cut off before its END line', () => {
+    const line = 'MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun';
+    const { redacted } = redact(`key: -----BEGIN PRIVATE KEY-----\n${line}\n${line.slice(0, 20)}`);
+    expect(redacted).toBe('key: [REDACTED:private-key]');
+  });
+
   it('redacts JWTs but does not report them as leaks (every SSR app inlines one)', () => {
     const jwt = 'ey' + 'a'.repeat(20) + '.ey' + 'b'.repeat(20) + '.' + 'c'.repeat(20);
     expect(redact(`token=${jwt}`).redacted).toContain('[REDACTED:jwt]');

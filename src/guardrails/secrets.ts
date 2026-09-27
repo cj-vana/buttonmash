@@ -44,7 +44,13 @@ export const SECRET_RULES: SecretRule[] = [
     id: 'jwt',
     re: /\bey[a-zA-Z0-9]{17,}\.ey[a-zA-Z0-9/_-]{17,}\.[a-zA-Z0-9/_-]{10,}={0,2}\b/g,
   },
-  { id: 'private-key', re: /-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----/g },
+  // gitleaks' form runs from BEGIN through the END line. The second branch
+  // takes the base64 run after a BEGIN whose END never arrives (a log line cut
+  // short), so the body goes too; it may also take words that follow it.
+  {
+    id: 'private-key',
+    re: /-----BEGIN[ A-Z0-9_-]{0,100}PRIVATE KEY(?: BLOCK)?-----(?:[\s\S-]{64,}?KEY(?: BLOCK)?-----|[A-Za-z0-9+/=\s\\]*)/g,
+  },
 ];
 
 export interface RedactResult {
