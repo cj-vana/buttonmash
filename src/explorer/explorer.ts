@@ -15,6 +15,10 @@ export class Explorer {
   private completedForms = new Set<string>();
   /** Attempts per create-surface fpKey. */
   private formAttempts = new Map<string, number>();
+  /** `${url}|${fp}` controls whose action timed out. Something else covers them
+   *  (a canvas layer, a stuck overlay), and every retry waits out the full
+   *  interaction timeout. */
+  private unreachable = new Set<string>();
 
   constructor(
     private rng: Rng,
@@ -50,6 +54,15 @@ export class Explorer {
 
   get statesDiscovered(): number {
     return this.seenStates.size;
+  }
+
+  markUnreachable(url: string, fp: string): void {
+    this.unreachable.add(`${url}|${fp}`);
+  }
+
+  /** The controls on `url` that have not timed out there. */
+  reachable(url: string, elements: readonly ElementDescriptor[]): ElementDescriptor[] {
+    return elements.filter((e) => !this.unreachable.has(`${url}|${e.fp}`));
   }
 
   /**

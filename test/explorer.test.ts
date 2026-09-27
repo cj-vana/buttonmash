@@ -49,4 +49,14 @@ describe('Explorer', () => {
     const e = new Explorer(new Rng('s'), 0);
     expect(e.choose('state', [])).toBeUndefined();
   });
+
+  it('stops offering a control that timed out, on that page only', () => {
+    const e = new Explorer(new Rng('s'), 0.5);
+    e.markUnreachable('http://app.test/editor', 'a');
+    expect(e.reachable('http://app.test/editor', els('a', 'b')).map((el) => el.fp)).toEqual(['b']);
+    expect(e.reachable('http://app.test/other', els('a', 'b')).map((el) => el.fp)).toEqual([
+      'a',
+      'b',
+    ]);
+  });
 });

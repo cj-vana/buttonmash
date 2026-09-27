@@ -85,6 +85,18 @@ export async function startServer(): Promise<TestServer> {
       );
       return;
     }
+    // Canvas-style editor: a full-viewport layer sits over every control, so
+    // Playwright's click waits out its timeout (for unreachable-control tests).
+    if (url === '/covered') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(
+        '<!doctype html><meta charset="utf-8"><title>Canvas</title>' +
+          '<button id="pen">Pen</button><button id="hand">Hand</button>' +
+          '<button id="shapes">Shapes</button>' +
+          '<div id="layer" style="position:fixed;inset:0;z-index:10"></div>',
+      );
+      return;
+    }
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
   });

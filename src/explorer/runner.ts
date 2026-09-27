@@ -7,7 +7,7 @@
 import { resolve } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 
-import type { Browser } from 'playwright';
+import { errors, type Browser } from 'playwright';
 
 import type { ResolvedConfig } from '../config/load';
 import { loadBaseline } from '../baseline';
@@ -413,7 +413,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       explorer.markState(stateHash);
       sinceNew = newState ? 0 : sinceNew + 1;
 
-      if (elements.length === 0) {
+      // Controls that already timed out on this page stay in the state hash but
+      // are never picked again; a page left with none of them is done.
+      const reachable = explorer.reachable(nUrl, elements);
+      if (reachable.length === 0) {
         if (!(await moveOn())) {
           termination = { kind: 'complete', reason: crawlDone() };
           break;
@@ -428,7 +431,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       // enabled, a fresh create-surface exists, the global record cap allows, and
       // a seeded coin says so — otherwise fall through to today's behavior.
       const forms = cfg.explore.forms.enabled
-        ? groupForms(elements, cfg.explore.forms.createVerbs)
+        ? groupForms(reachable, cfg.explore.forms.createVerbs)
         : [];
       let plan: ReturnType<typeof planAction> | undefined;
       let chosenForm: ReturnType<typeof explorer.chooseForm>;
@@ -444,7 +447,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         }
       }
       if (!plan) {
-        const el = explorer.choose(stateHash, elements);
+        const el = explorer.choose(stateHash, reachable);
         plan = gatePlan(planAction(rng, cfg, el), cfg, recorder);
       }
       const ctx: ActionContext = { page, rng, cfg, runId: cfg.seed, step: i, state, recorder };
@@ -492,6 +495,9 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           recorder.add('driver', `action ${plan.kind} failed: ${(err as Error).message}`, {
             severity: 'low',
           });
+          if (plan.el && err instanceof errors.TimeoutError) {
+            explorer.markUnreachable(nUrl, plan.el.fp);
+          }
         }
       }
 
