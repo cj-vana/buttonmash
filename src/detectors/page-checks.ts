@@ -118,7 +118,6 @@ function domCheck(): { blank: boolean; brokenImages: string[]; overlay: string |
   // Framework error overlays — error boundaries often don't re-throw to window,
   // so neither pageerror nor blank-screen fires. Match TIGHT signatures only.
   const OVERLAY_SELECTORS = [
-    'nextjs-portal',
     'vite-error-overlay',
     '#vite-error-overlay',
     '[data-nextjs-dialog]',
@@ -126,9 +125,16 @@ function domCheck(): { blank: boolean; brokenImages: string[]; overlay: string |
     '#webpack-dev-server-client-overlay',
     'react-error-overlay',
   ];
+  // Next.js 15/16 append a <nextjs-portal> to every dev page, error or not, and
+  // renders its overlay inside the portal's open shadow root, out of reach of
+  // document.querySelector.
+  const overlayRoots: ParentNode[] = [document];
+  for (const portal of Array.from(document.querySelectorAll('nextjs-portal'))) {
+    if (portal.shadowRoot) overlayRoots.push(portal.shadowRoot);
+  }
   let overlay: string | null = null;
   for (const s of OVERLAY_SELECTORS) {
-    if (document.querySelector(s)) {
+    if (overlayRoots.some((root) => root.querySelector(s))) {
       overlay = s;
       break;
     }
