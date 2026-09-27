@@ -183,7 +183,11 @@ export function createProgram(): Command {
     .description(
       'A CI chaos monkey for web apps — press every button, mash keys, break things, report.',
     )
-    .version(version, '-v, --version');
+    .version(version, '-v, --version')
+    // Commander exits 1 on a usage error, which CI would read as "findings".
+    // Set before any .command(): subcommands copy the callback when created.
+    // Commander calls process.exit itself if the callback returns, so exit here.
+    .exitOverride((err) => process.exit(err.exitCode === 0 ? EXIT.CLEAN : EXIT.ERROR));
 
   program
     .command('run', { isDefault: true })
