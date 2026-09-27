@@ -16,7 +16,7 @@ inputs:
     required: false
     default: ''
   node-version:
-    description: 'Node version.'
+    description: 'Node version the action installs with actions/setup-node. That Node stays on PATH for the rest of your job. Set this to an empty string to skip setup-node and run on the Node already on PATH.'
     required: false
     default: '24'
   browser:
@@ -48,7 +48,8 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - uses: actions/setup-node@v5
+    - if: ${{ inputs.node-version != '' }}
+      uses: actions/setup-node@v5
       with:
         node-version: ${{ inputs.node-version }}
     - id: install

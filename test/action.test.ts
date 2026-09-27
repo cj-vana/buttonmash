@@ -144,6 +144,13 @@ describe('action install step', () => {
   it('sets up a supported Node by default', () => {
     expect(inputDefault('node-version')).toBe('24');
   });
+
+  it("skips setup-node, which changes the caller's Node, when node-version is empty", () => {
+    expect(actionYml).toMatch(
+      /- if: \$\{\{ inputs\.node-version != '' \}\}\n\s+uses: actions\/setup-node@v\d+\n/,
+    );
+    expect(actionYml).toMatch(/^ {2}node-version:\n {4}description: '.*empty string.*'$/m);
+  });
 });
 
 describe('action upload step', () => {
