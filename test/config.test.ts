@@ -194,6 +194,54 @@ describe('additive CLI lists and credential hygiene', () => {
     expect(cfg.guardrails.allowedOrigins).toContain('https://a.example.com');
   });
 
+  it('normalizes allowed origins from the config and from --allow-origin', async () => {
+    // The fence compares exact origins, so a trailing slash or upper-case host
+    // would otherwise allow nothing.
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://a.example.test',
+        guardrails: { allowedOrigins: ['https://auth.example.test/', 'https://A.example.test'] },
+      },
+      append: { allowedOrigins: ['https://CDN.example.test/assets/app.js'] },
+    });
+    expect(cfg.guardrails.allowedOrigins.sort()).toEqual([
+      'https://a.example.test',
+      'https://auth.example.test',
+      'https://cdn.example.test',
+    ]);
+  });
+
+  it('rejects an allowed origin that does not parse, naming where it came from', async () => {
+    const fromConfig = loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://a.example.test',
+        guardrails: { allowedOrigins: ['auth.example.test'] },
+      },
+    });
+    await expect(fromConfig).rejects.toBeInstanceOf(ConfigError);
+    await expect(fromConfig).rejects.toThrow(/guardrails\.allowedOrigins.*auth\.example\.test/);
+
+    const fromFlag = loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: 'https://a.example.test' },
+      append: { allowedOrigins: ['cdn example'] },
+    });
+    await expect(fromFlag).rejects.toBeInstanceOf(ConfigError);
+    await expect(fromFlag).rejects.toThrow(/--allow-origin.*cdn example/);
+
+    // An opaque origin serializes as the string 'null', which would allow every
+    // opaque URL the fence sees.
+    await expect(
+      loadConfig({
+        ignoreConfigFile: true,
+        overrides: { target: 'https://a.example.test' },
+        append: { allowedOrigins: ['file:///etc/passwd'] },
+      }),
+    ).rejects.toThrow(/--allow-origin/);
+  });
+
   it('append.routes adds to configured routes', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,
