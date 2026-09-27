@@ -34,20 +34,14 @@ export const TEST_MODE_PATTERNS: BillingPattern[] = [
   { id: 'braintree-sandbox', re: /\bsandbox_[a-z0-9]{8,}_[a-z0-9]{8,}\b/ },
 ];
 
-/** Outbound requests to these hosts mean live processing. */
+/** Outbound requests to these hosts mean live processing. www.paypal.com is
+ *  decided per request instead (see paypalIsLive): sandbox integrations load
+ *  the SDK from it too. */
 export const LIVE_HOSTS = new Set([
-  'www.paypal.com',
   'api.braintreegateway.com',
   'connect.squareup.com',
   'checkout.adyen.com',
   'live.adyen.com',
-]);
-
-export const SANDBOX_HOSTS = new Set([
-  'www.sandbox.paypal.com',
-  'api.sandbox.braintreegateway.com',
-  'connect.squareupsandbox.com',
-  'checkout-test.adyen.com',
 ]);
 
 /** Registrable domains of payment processors. Matching processor words
@@ -70,6 +64,28 @@ function onDomain(hostname: string, domain: string): boolean {
   return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
+/** paypal-js loads the SDK from here unless told `environment: "sandbox"`;
+ *  the client id then decides which environment it talks to. */
+const PAYPAL_LIVE_HOST = 'www.paypal.com';
+
+/** Placeholder client ids that run the SDK against the sandbox: `sb`, and
+ *  `test` (what paypal-js's own e2e fixture loads,
+ *  packages/paypal-js/e2e-tests/browser-global.html). Any other id may be live. */
+const PAYPAL_SANDBOX_CLIENT_IDS = new Set(['sb', 'test']);
+
+/** Paths on www.paypal.com that create, approve or capture a payment. */
+const PAYPAL_PAYMENT_PATH_RE =
+  /^\/(?:checkout|v1\/|v2\/|smart\/api\/|cgi-bin\/webscr|webapps\/hermes|donate)/;
+
+function paypalIsLive(u: URL): boolean {
+  if (u.pathname.startsWith('/sdk/js')) {
+    return !PAYPAL_SANDBOX_CLIENT_IDS.has(u.searchParams.get('client-id') ?? '');
+  }
+  // The v6 SDK takes its environment from the host it is loaded from.
+  if (u.pathname.startsWith('/web-sdk/')) return true;
+  return PAYPAL_PAYMENT_PATH_RE.test(u.pathname);
+}
+
 /** Detect live-mode evidence in a blob of page text (HTML + scripts + globals). */
 export function scanTextForLiveMode(text: string): string[] {
   const reasons: string[] = [];
@@ -82,13 +98,16 @@ export function scanTextForLiveMode(text: string): string[] {
 /** Detect live-mode evidence in a single outbound request. */
 export function inspectRequestForLiveMode(url: string, postData: string | null): string[] {
   const reasons: string[] = [];
-  let host = '';
+  let parsed: URL;
   try {
-    host = new URL(url).hostname;
+    parsed = new URL(url);
   } catch {
     return reasons;
   }
-  if (LIVE_HOSTS.has(host)) reasons.push(`live-host:${host}`);
+  const host = parsed.hostname;
+  if (LIVE_HOSTS.has(host) || (host === PAYPAL_LIVE_HOST && paypalIsLive(parsed))) {
+    reasons.push(`live-host:${host}`);
+  }
   const haystack = `${url}\n${postData ?? ''}`;
   // api.stripe.com serves test and live mode alike; the key decides.
   if (onDomain(host, 'stripe.com')) {

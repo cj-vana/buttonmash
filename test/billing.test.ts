@@ -38,6 +38,45 @@ describe('billing live-mode detection', () => {
   });
 });
 
+describe('PayPal live mode', () => {
+  const live = (url: string) => inspectRequestForLiveMode(url, null);
+
+  it('treats an SDK load with a sandbox client id as sandbox', () => {
+    // paypal-js loads www.paypal.com/sdk/js unless told environment: "sandbox".
+    expect(live('https://www.paypal.com/sdk/js?client-id=sb&currency=USD')).toEqual([]);
+    expect(live('https://www.paypal.com/sdk/js?client-id=test&components=buttons')).toEqual([]);
+  });
+
+  it('treats an SDK load with any other client id as live', () => {
+    const id = 'AZDxjDScFpQtjWTOUtWKbyN_bDt4OgqaF4eYXlewfBP4-8aqX3PiV8e1GWU6liB2CUXlkA59kJXE7M6R';
+    expect(live(`https://www.paypal.com/sdk/js?client-id=${id}`)).toEqual([
+      'live-host:www.paypal.com',
+    ]);
+    expect(live('https://www.paypal.com/sdk/js?currency=USD')).toEqual([
+      'live-host:www.paypal.com',
+    ]);
+    // The v6 SDK picks its environment by host, so the live host means live.
+    expect(live('https://www.paypal.com/web-sdk/v6/core')).toEqual(['live-host:www.paypal.com']);
+  });
+
+  it('treats order and checkout paths on www.paypal.com as live', () => {
+    for (const path of [
+      '/checkoutnow?token=EC-1AB23456CD789012E',
+      '/v2/checkout/orders',
+      '/smart/api/order/5O190127TN364715T/capture',
+      '/cgi-bin/webscr',
+    ]) {
+      expect(live(`https://www.paypal.com${path}`), path).toEqual(['live-host:www.paypal.com']);
+    }
+  });
+
+  it('does not treat the buttons frame or the sandbox host as live', () => {
+    expect(live('https://www.paypal.com/smart/buttons?env=sandbox&clientID=sb')).toEqual([]);
+    expect(live('https://www.sandbox.paypal.com/checkoutnow?token=EC-1')).toEqual([]);
+    expect(live('https://www.sandbox.paypal.com/v2/checkout/orders')).toEqual([]);
+  });
+});
+
 describe('isPaymentHost', () => {
   it('matches processor domains and their subdomains', () => {
     for (const host of [
