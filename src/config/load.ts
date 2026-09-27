@@ -18,9 +18,13 @@ export class ConfigError extends Error {
 }
 
 /** Config with all required values resolved. */
-export interface ResolvedConfig extends Omit<ParsedConfig, 'target' | 'seed' | 'routes'> {
+export interface ResolvedConfig extends Omit<
+  ParsedConfig,
+  'target' | 'seed' | 'routes' | 'report'
+> {
   target: string;
   seed: string;
+  report: ParsedConfig['report'] & { captureTrace: boolean };
   /** Absolute, same-origin-resolved seed routes (excludes the target itself). */
   routes: string[];
   /** Absolute path of the config file used, if any. */
@@ -234,6 +238,25 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
       path: cfg.baseline.path ? resolve(cwd, cfg.baseline.path) : undefined,
     },
     guardrails: { ...cfg.guardrails, allowedOrigins },
+    report: { ...cfg.report, captureTrace: resolveCaptureTrace(cfg) },
     configPath,
   };
+}
+
+/** A Playwright trace stores request headers, cookies and filled values as-is,
+ *  and the GitHub Action uploads it with the report. */
+function resolveCaptureTrace(cfg: ParsedConfig): boolean {
+  const credentials =
+    Object.keys(cfg.headers).length > 0 ||
+    !!cfg.auth.basicAuth ||
+    !!cfg.auth.loginScript ||
+    !!cfg.auth.storageState;
+  if (cfg.report.captureTrace === undefined) return !credentials;
+  if (cfg.report.captureTrace && credentials) {
+    logger.warn(
+      'report.captureTrace is on for a run with credentials: trace.zip will contain ' +
+        'request headers, cookies and typed passwords. Keep it out of shared artifacts.',
+    );
+  }
+  return cfg.report.captureTrace;
 }

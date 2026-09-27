@@ -253,7 +253,10 @@ const ReportSchema = z
     /** Emit GitHub Actions annotations + job summary when running on GHA. */
     github: z.boolean().default(true),
     captureScreenshots: z.boolean().default(true),
-    captureTrace: z.boolean().default(true),
+    /** Record a Playwright trace. Defaults to on, except for runs that carry
+     *  credentials (headers, basic auth, a login script, a storageState): a
+     *  trace keeps request headers, cookies and typed passwords verbatim. */
+    captureTrace: z.boolean().optional(),
     captureVideo: z.boolean().default(false),
   })
   .default({});
