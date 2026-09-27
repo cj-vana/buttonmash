@@ -9,7 +9,7 @@ import { mkdir } from 'node:fs/promises';
 
 import { errors, type Browser } from 'playwright';
 
-import type { ResolvedConfig } from '../config/load';
+import { ConfigError, type ResolvedConfig } from '../config/load';
 import { loadBaseline } from '../baseline';
 import { sleep, TimeoutError, withDeadline } from '../core/async';
 import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
@@ -44,6 +44,8 @@ import { collectLinks, discoverElements, drainNavLog } from './discover';
 import { groupForms } from './forms';
 import { Explorer } from './explorer';
 import { RouteFrontier } from './frontier';
+import { CoveredControlError } from './hit-test';
+import { pathGuardReason } from './route-guard';
 import { awaitPageReady } from './readiness';
 import { finalizeRun } from './run-result';
 
@@ -86,11 +88,16 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   );
   if (cfg.guardrails.dryRun) logger.info('Mode:    DRY RUN (read-only)');
 
-  // An invalid/missing auth file falls back to an unauthenticated run — passing
-  // the path through anyway would make browser.newContext() throw (exit 2).
+  // A configured auth file that is missing or unreadable is a config error: an
+  // unauthenticated run would pass green without reaching the app behind login.
   if (cfg.auth.storageState && !(await validateStorageState(cfg.auth.storageState))) {
-    cfg = { ...cfg, auth: { ...cfg.auth, storageState: undefined } };
+    throw new ConfigError(
+      `auth.storageState ${cfg.auth.storageState} is missing or not a Playwright storageState ` +
+        'file. Capture one with `buttonmash auth <login-url>`.',
+    );
   }
+  // Compiled before the browser starts, so a bad pattern can't strand it.
+  const loginRe = new RegExp(cfg.auth.loginUrlPattern, 'i');
 
   const rng = new Rng(cfg.seed);
   const recorder = new SignalRecorder();
@@ -133,7 +140,16 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const allowedSet = new Set(cfg.guardrails.allowedOrigins);
 
   const browser: Browser = await launchBrowser(cfg.browser, cfg.headless);
-  const handles = await createDeterministicContext(browser, cfg, await ensureArtifactDir(outDir));
+  // Until the run loop's own teardown takes over, a throw must close the
+  // browser, or a programmatic caller's process never exits.
+  const closeOnThrow = async <T>(work: Promise<T>): Promise<T> =>
+    work.catch(async (err: unknown) => {
+      await browser.close().catch(() => {});
+      throw err;
+    });
+  const handles = await closeOnThrow(
+    createDeterministicContext(browser, cfg, await ensureArtifactDir(outDir)),
+  );
   const context = handles.context;
   let page = handles.page; // reassigned if the renderer crashes and we recreate it
 
@@ -150,7 +166,12 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   // operation throws "Target crashed" — so recovery keys on this latch,
   // not on page.isClosed().
   let pageCrashed = false;
+  // Set by every main-frame navigation; the loop waits for readiness once each.
+  let needsReady = true;
   const wirePage = (p: typeof page): void => {
+    p.on('framenavigated', (frame) => {
+      if (frame === p.mainFrame()) needsReady = true;
+    });
     attachSignalListeners({
       page: p,
       recorder,
@@ -173,7 +194,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     return p;
   };
 
-  await installContextFence(context, fenceOpts, recorder);
+  await closeOnThrow(installContextFence(context, fenceOpts, recorder));
   wirePage(page);
 
   const MAX_CRASHES = 5;
@@ -193,6 +214,21 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   });
   for (const route of cfg.routes) frontier.enqueue(route);
 
+  // The target and configured routes are exempt: the user asked for them.
+  const configuredStarts = new Set([cfg.target, ...cfg.routes].map((u) => normalizeUrl(u)));
+  const routeGuardReason = (raw: string): string | null => {
+    if (configuredStarts.has(normalizeUrl(raw))) return null;
+    try {
+      return pathGuardReason(new URL(raw), {
+        blocked: blockedPathRe,
+        include: includeRe,
+        exclude: excludeRe,
+      });
+    } catch {
+      return null;
+    }
+  };
+
   const gotoUrl = async (u: string): Promise<void> => {
     await withDeadline(
       page.goto(u, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
@@ -208,12 +244,28 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
 
   const moveOn = (): Promise<boolean> => frontier.moveOn(cfg.target, gotoUrl);
 
+  // A renderer that can't answer a trivial evaluate is frozen (an endless loop
+  // in a handler). Record it as a hang and recover the way a crash does: a new
+  // page, and the frozen one is not revisited.
+  const rendererFrozen = (p: typeof page): Promise<boolean> =>
+    withDeadline(
+      p.evaluate(() => 1),
+      2_000,
+      'renderer-probe',
+    ).then(
+      () => false,
+      () => true,
+    );
+  const recordHang = (detail: string): void => {
+    recorder.add('hang', detail, { severity: 'high' });
+    pageCrashed = true;
+  };
+
   if (cfg.explore.crawl) logger.info('Crawl:   auto-discovering links across the site');
   else if (cfg.routes.length) logger.info(`Routes:  sweeping ${1 + cfg.routes.length} routes`);
 
   // Auth: detect logged-out/login pages and (re-)authenticate via a login script.
   const authConfigured = !!(cfg.auth.storageState || cfg.auth.loginScript);
-  const loginRe = new RegExp(cfg.auth.loginUrlPattern, 'i');
   const isLoginPage = (u: string): boolean => {
     try {
       // routePath so a hash-routed `#/login` is recognized too.
@@ -228,14 +280,14 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   // the whole budget against the auth endpoint (and can lock the account).
   let loginAttempts = 0;
   const MAX_LOGIN_ATTEMPTS = 3;
-  const doLogin = async (): Promise<void> => {
-    if (!cfg.auth.loginScript) return;
+  const doLogin = async (): Promise<boolean> => {
+    if (!cfg.auth.loginScript) return false;
     const ls = {
       ...cfg.auth.loginScript,
       url: new URL(cfg.auth.loginScript.url, cfg.target).toString(),
     };
     logger.step('Logging in via login script…');
-    await performScriptedLogin(page, ls, navTimeout).catch(() => {});
+    return performScriptedLogin(page, ls, navTimeout).catch(() => false);
   };
 
   // Signals fired during login/initial load (startup console errors, 404s for
@@ -243,7 +295,16 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   // signals recorded once the loop sets a real context.
   recorder.setContext(0, cfg.target);
 
-  if (cfg.auth.loginScript) await doLogin();
+  // A login script that never gets in must end the run: exploring the public
+  // pages instead would pass green without reaching the app behind the login.
+  const initialLoginFailed = !!cfg.auth.loginScript && !(await doLogin());
+  if (initialLoginFailed) {
+    recorder.add(
+      'session-lost',
+      'login script did not authenticate; check auth.loginScript selectors, credentials and success condition',
+      { severity: 'high' },
+    );
+  }
   // After the login, so a trace never records the password being typed.
   await startTracing(context, cfg);
 
@@ -269,7 +330,9 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   let depth = 0;
   let sinceNew = 0;
   let recordsCreated = 0;
-  let termination: Termination = { kind: 'complete', reason: 'budget exhausted' };
+  let termination: Termination = initialLoginFailed
+    ? { kind: 'auth-failed', reason: 'login script could not authenticate' }
+    : { kind: 'complete', reason: 'budget exhausted' };
 
   // Graceful shutdown: on SIGINT/SIGTERM (CI cancel/timeout) flip a flag and let
   // the loop break cleanly so the report still flushes with partial findings.
@@ -281,7 +344,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   process.once('SIGTERM', onSignal);
 
   try {
-    for (let i = 0; i < cfg.budget.maxActions; i++) {
+    for (let i = 0; i < cfg.budget.maxActions && !initialLoginFailed; i++) {
       if (aborted) {
         termination = { kind: 'aborted', reason: 'aborted (received SIGINT/SIGTERM)' };
         break;
@@ -322,7 +385,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           };
           break;
         }
-        frontier.markCrashed(lastUrl); // don't revisit the page that crashed
+        // Don't revisit the page that crashed. page.url() rather than lastUrl:
+        // a click that navigated and then crashed took the crash with it.
+        const crashedUrl = page.url();
+        frontier.markCrashed(crashedUrl && crashedUrl !== 'about:blank' ? crashedUrl : lastUrl);
         await page.close().catch(() => {});
         page = await setupPage();
         depth = 0;
@@ -338,7 +404,13 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       const offOrigin = !isAllowedOrigin(url, allowedSet);
       const deadPage = url === 'about:blank' || url === '' || url.startsWith('chrome-error');
       const saturated = sinceNew >= cfg.budget.saturationLimit;
-      if (depth >= cfg.budget.maxDepth || offOrigin || deadPage || saturated) {
+      // A client-side (pushState or hash) route into a blocked, excluded or
+      // not-included path never passes the frontier or the network fence.
+      const guarded = !offOrigin && !deadPage && routeGuardReason(url);
+      if (guarded) {
+        recorder.add('guardrail', `left a ${guarded} path: ${url}`, { severity: 'info' });
+      }
+      if (depth >= cfg.budget.maxDepth || offOrigin || deadPage || saturated || guarded) {
         if (!(await moveOn())) {
           termination = { kind: 'complete', reason: crawlDone() };
           break;
@@ -398,7 +470,13 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       // Wait for the app to actually render interactive content. Client-rendered
       // SPAs return from 'domcontentloaded' before React/Vue has mounted, so we
       // also wait (bounded) for at least one interactive element to appear.
-      await awaitPageReady(page, cfg.budget.readyTimeoutMs);
+      // Only after a navigation: a page whose load event never fires (a stream,
+      // a blackholed third-party image) would otherwise cost the full wait on
+      // every step.
+      if (needsReady) {
+        needsReady = false;
+        await awaitPageReady(page, cfg.budget.readyTimeoutMs);
+      }
 
       // Grow the frontier with same-origin links AND any client-side (SPA)
       // navigations the app made (button/navigate() routes that aren't <a href>).
@@ -461,9 +539,17 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       const ctx: ActionContext = { page, rng, cfg, runId: cfg.seed, step: i, state, recorder };
 
       let navigated = false;
+      // Stamped before the action: the signals it causes (a click handler's
+      // error, a request) often arrive before it returns, and attribution picks
+      // the last action that started at or before each signal.
+      const startedAt = Date.now();
       try {
         const res = await executeAction(ctx, plan);
         navigated = res.navigated;
+        // A form attempt that gave up may have given up on a frozen page.
+        if (res.kind === 'submit-form' && !res.submitted && (await rendererFrozen(page))) {
+          recordHang(`renderer stopped responding while completing a form (${res.target ?? ''})`);
+        }
         if (res.submitted && chosenForm) {
           recordsCreated += 1;
           explorer.markFormCompleted(chosenForm.fpKey);
@@ -480,7 +566,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           selector: res.selector,
           value: res.value,
           url,
-          ts: Date.now(),
+          ts: startedAt,
           navigated: res.navigated,
           formKey: res.formKey,
           fieldsFilled: res.fieldsFilled,
@@ -491,21 +577,39 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           `#${i} ${res.kind}${res.target ? ` "${res.target}"` : ''}${res.value ? ` = ${res.value}` : ''}`,
         );
       } catch (err) {
+        const message = (err as Error).message;
+        // Failed actions stay in the trace: they are often the step that caused
+        // the finding, and the repro would otherwise skip them.
+        actionLog.push({
+          step: i,
+          kind: plan.kind,
+          stateHash,
+          fp: plan.el?.fp,
+          target: plan.el?.name || undefined,
+          selector: plan.el?.selector,
+          url,
+          ts: startedAt,
+          error: message.split('\n')[0]!.slice(0, 200),
+        });
         if (err instanceof TimeoutError) {
           recorder.add(
             'hang',
-            `${err.message} (action ${plan.kind} on ${plan.el?.selector ?? 'page'})`,
+            `${message} (action ${plan.kind} on ${plan.el?.selector ?? 'page'})`,
             {
               severity: 'high',
             },
           );
+        } else if (err instanceof errors.TimeoutError && (await rendererFrozen(page))) {
+          // Playwright's own timeout fires first (interaction timeout < the
+          // watchdog), so a frozen renderer looked like an unclickable control.
+          recordHang(
+            `renderer stopped responding during ${plan.kind} on ${plan.el?.selector ?? 'page'}`,
+          );
         } else {
-          recorder.add('driver', `action ${plan.kind} failed: ${(err as Error).message}`, {
-            severity: 'low',
-          });
-          if (plan.el && err instanceof errors.TimeoutError) {
-            explorer.markUnreachable(nUrl, plan.el.fp);
-          }
+          recorder.add('driver', `action ${plan.kind} failed: ${message}`, { severity: 'low' });
+          const unreachable =
+            err instanceof errors.TimeoutError || err instanceof CoveredControlError;
+          if (plan.el && unreachable) explorer.markUnreachable(nUrl, plan.el.fp);
         }
       }
 
