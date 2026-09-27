@@ -24,6 +24,22 @@ describe('secrets', () => {
     expect(hits.every((h) => !h.context.includes('sk_test_bbbb'))).toBe(true);
   });
 
+  it('keeps a neighbouring secret cut by the context window out of the context', () => {
+    const aws = 'AKIA' + 'IOSFODNN7EXAMPL2';
+    const gh = 'ghp_' + 'Q7w9E2r4T6y8U1i3O5p7A9s2D4f6G8h1J3k5';
+    const page = `<script>window.cfg={"a":"${aws}","g":"${gh}"}</script>`;
+    const hits = scanForSecrets(page);
+    expect(hits.map((h) => h.ruleId).sort()).toEqual(['aws-access-key-id', 'github-pat']);
+    for (const hit of hits) {
+      expect(hit.context).not.toContain(aws.slice(4, 12));
+      expect(hit.context).not.toContain(gh.slice(4, 12));
+    }
+  });
+
+  it('does not report a placeholder the page already contained', () => {
+    expect(scanForSecrets('docs: we log [REDACTED:github-pat] instead of tokens')).toEqual([]);
+  });
+
   it('returns no hits on clean text', () => {
     expect(scanForSecrets('just some harmless text')).toHaveLength(0);
   });
