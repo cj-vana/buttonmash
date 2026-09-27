@@ -8,7 +8,7 @@ inputs:
     description: 'URL to test (your app must already be running/served).'
     required: true
   args:
-    description: 'Extra buttonmash CLI args (e.g. "--seed ci --max-actions 800 --config buttonmash.config.ts"). Split like a shell command line, so quotes group words: --baseline-id "staging admin". Nothing is globbed.'
+    description: 'Extra buttonmash CLI args (e.g. "--seed ci --max-actions 800 --config buttonmash.config.ts"). Split like a shell command line, so quotes group words: --baseline-id "staging admin". Nothing is globbed. --out/-o and --browser/-b are rejected: the report location is fixed so the outputs and upload can find it, and the engine comes from the browser input.'
     required: false
     default: ''
   version:
@@ -92,6 +92,16 @@ runs:
             BM_EXTRA+=("$arg")
           done < "$BM_DIR/args.txt"
         fi
+        # commander keeps the last value, so these would silently beat the
+        # action's own --out and --browser.
+        for arg in "${BM_EXTRA[@]}"; do
+          case "$arg" in
+            --out | --out=* | -o*)
+              reject "Remove --out (-o) from args. The action always writes the report to buttonmash-report/ in the workspace, where the findings and report-path outputs and the upload look for it. Read its location from the report-path output." ;;
+            --browser | --browser=* | -b*)
+              reject "Remove --browser (-b) from args and set the browser input instead. The action installs only the engine named by that input." ;;
+          esac
+        done
         "$BM_DIR/node_modules/.bin/buttonmash" run "$BM_TARGET" \
           --browser "$BM_BROWSER" \
           --fail-on "$BM_FAIL_ON" \

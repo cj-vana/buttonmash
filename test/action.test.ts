@@ -154,6 +154,24 @@ describe('action run step: args parsing', () => {
     expect(step.stdout).not.toContain(TARGET);
   });
 
+  it.each([
+    ['--out elsewhere', '--out'],
+    ['--out=elsewhere', '--out'],
+    ['-o elsewhere', '--out'],
+    ['-oelsewhere', '--out'],
+    ['--seed ci --browser firefox', 'browser input'],
+    ['--browser=firefox', 'browser input'],
+    ['-b firefox', 'browser input'],
+    ['-bwebkit', 'browser input'],
+  ])('rejects %s in args with exit code 2', (args, hint) => {
+    const step = runButtonmash({ args });
+    expect(step.status).toBe(2);
+    expect(step.outputs).toEqual({ 'exit-code': '2' });
+    expect(step.stdout).toMatch(/^::error::/);
+    expect(step.stdout).toContain(hint);
+    expect(step.stdout).not.toContain(TARGET);
+  });
+
   it('reports the buttonmash exit code and the report path', () => {
     const step = runButtonmash({ stubExit: 1 });
     expect(step.status).toBe(1);
