@@ -26,6 +26,20 @@ describe('aggregateFindings', () => {
     expect(findings[0]!.firstSeenStep).toBe(1);
   });
 
+  it('keeps info guardrail notes and dialogs as findings, sorted last', () => {
+    const signals: Signal[] = [
+      sig({ kind: 'guardrail', detail: 'skipped destructive control: Delete', severity: 'info' }),
+      sig({ kind: 'dialog', detail: 'alert: Saved!', severity: 'low' }),
+      sig({ kind: 'pageerror', detail: 'kaboom', severity: 'high' }),
+    ];
+    const findings = aggregateFindings({ signals, actions: [], screenshots: new Map() });
+    expect(findings.map((f) => [f.category, f.severity])).toEqual([
+      ['js-error', 'high'],
+      ['dialog', 'low'],
+      ['guardrail', 'info'],
+    ]);
+  });
+
   it('keeps distinct categories separate and sorts by severity', () => {
     const signals: Signal[] = [
       sig({ kind: 'broken-image', detail: '/a.png', severity: 'low' }),

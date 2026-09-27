@@ -127,7 +127,9 @@ export function aggregateFindings(input: AggregateInput): Finding[] {
 
   for (const sig of signals) {
     const meta = KIND_META[sig.kind];
-    // Informational dialogs and benign customs below 'low' aren't findings.
+    // Every signal becomes a finding, including info guardrail notes and
+    // dialogs: they stay visible in results.json, and failOn decides whether
+    // any of them fail the run.
     const severity = sig.severity ?? meta.defaultSeverity;
     // Fold the exact HTTP status into the key: the signature's digit-stripping
     // would otherwise merge a 401 and a 404 on the same route into one finding.
