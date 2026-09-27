@@ -8,7 +8,7 @@ inputs:
     description: 'URL to test (your app must already be running/served).'
     required: true
   args:
-    description: 'Extra buttonmash CLI args (e.g. "--seed ci --max-actions 800 --config buttonmash.config.ts").'
+    description: 'Extra buttonmash CLI args (e.g. "--seed ci --max-actions 800 --config buttonmash.config.ts"). Split like a shell command line, so quotes group words: --baseline-id "staging admin". Nothing is globbed.'
     required: false
     default: ''
   version:
@@ -75,12 +75,28 @@ runs:
         BM_ARGS: ${{ inputs.args }}
       run: |
         set +e
-        # shellcheck disable=SC2086  # BM_ARGS is intentionally word-split
+        reject() {
+          echo "::error::$1"
+          echo "exit-code=2" >> "$GITHUB_OUTPUT"
+          exit 2
+        }
+        # Split args the way a shell would, so quotes group words. xargs does
+        # the quote handling, and the array is only expanded quoted, so nothing
+        # is globbed. No mapfile: macOS runners can have bash 3.2. The blank
+        # check matters because GNU xargs runs printf once on empty input.
+        BM_EXTRA=()
+        if [ -n "${BM_ARGS//[[:space:]]/}" ]; then
+          printf '%s\n' "$BM_ARGS" | xargs -n1 printf '%s\n' > "$BM_DIR/args.txt" ||
+            reject "Could not split the args input; look for an unmatched quote."
+          while IFS= read -r arg; do
+            BM_EXTRA+=("$arg")
+          done < "$BM_DIR/args.txt"
+        fi
         "$BM_DIR/node_modules/.bin/buttonmash" run "$BM_TARGET" \
           --browser "$BM_BROWSER" \
           --fail-on "$BM_FAIL_ON" \
           --out "$GITHUB_WORKSPACE/buttonmash-report" \
-          $BM_ARGS
+          "${BM_EXTRA[@]}"
         CODE=$?
         echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
         echo "report-path=$GITHUB_WORKSPACE/buttonmash-report" >> "$GITHUB_OUTPUT"
