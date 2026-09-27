@@ -14,6 +14,7 @@ import { SignalRecorder } from './detectors/recorder';
 import { inspectRequestForLiveMode, scanTextForLiveMode } from './guardrails/billing';
 import { DANGEROUS_PATH_RE } from './guardrails/destructive';
 import { attachPageFence, installContextFence, isAllowedOrigin } from './guardrails/fence';
+import { redactString } from './guardrails/secrets';
 import { performScriptedLogin, validateStorageState } from './session/auth';
 import { createDeterministicContext, launchBrowser } from './session/browser';
 import { version } from './version';
@@ -107,7 +108,9 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
   let browser: Browser | undefined;
   let context: BrowserContext | undefined;
   try {
-    browser = await launchBrowser(cfg.browser, true);
+    browser = await launchBrowser(cfg.browser, true, {
+      vetRedirects: cfg.guardrails.vetRedirects,
+    });
     check(checks, 'browser', 'pass', `${cfg.browser} launched successfully`);
   } catch (err) {
     check(checks, 'browser', 'fail', `${cfg.browser} could not launch: ${(err as Error).message}`);
@@ -123,7 +126,7 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
     });
     context = handles.context;
     const { page } = handles;
-    const recorder = new SignalRecorder();
+    const recorder = new SignalRecorder(cfg.guardrails.secrets.redact ? redactString : undefined);
     const liveReasons = new Set<string>();
     let billingLatched = false;
     if (cfg.guardrails.billing.mode !== 'off') {
@@ -144,6 +147,7 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
       blockMedia: cfg.guardrails.blockMedia,
       billingMode: cfg.guardrails.billing.mode,
       isBillingLatched: () => billingLatched,
+      vetRedirects: cfg.guardrails.vetRedirects,
     };
     await installContextFence(context, fenceOptions, recorder);
     attachPageFence(page, fenceOptions, recorder);
