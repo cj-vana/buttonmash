@@ -14,6 +14,9 @@ import { buttonmash } from '../src/index';
 import { ConfigError } from '../src/config/load';
 import type { Config } from '../src/config/schema';
 
+/** Matches the github-pat rule: ghp_ plus 36 alphanumerics. */
+const GITHUB_TOKEN = `ghp_${'a1B2c3D4e5'.repeat(4).slice(0, 36)}`;
+
 const PAGES: Record<string, string> = {
   '/spa':
     '<h1>Dashboard</h1><button id="go">Settings</button>' +
@@ -28,6 +31,9 @@ const PAGES: Record<string, string> = {
     '<button>Pen</button><button>Hand</button>' +
     '<div style="position:fixed;inset:0;z-index:10"></div>',
   '/slow-load': '<img src="/never.png" alt="stream"><button>One</button><button>Two</button>',
+  '/token-dialog': `<button onclick="alert('deploy token ${GITHUB_TOKEN}')">Show token</button>`,
+  '/live':
+    '<button>Refresh</button><script>new WebSocket("ws://" + location.host + "/feed")</script>',
 };
 
 let server: Server;
@@ -43,6 +49,10 @@ beforeAll(async () => {
     const body = PAGES[path];
     res.writeHead(body ? 200 : 404, { 'content-type': 'text/html; charset=utf-8' });
     res.end(body ? `<!doctype html><meta charset="utf-8"><body>${body}</body>` : 'no');
+  });
+  server.on('upgrade', (req, socket) => {
+    hits.push(`UPGRADE ${req.url}`);
+    socket.destroy();
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const addr = server.address();
@@ -139,6 +149,28 @@ describe('actions that fail', () => {
     expect(failed[0]!.error).toMatch(/Timeout/);
     const timestamps = result.actions.map((a) => a.ts);
     expect(timestamps).toEqual([...timestamps].sort((a, b) => a - b));
+  }, 60_000);
+});
+
+describe('redirect vetting', () => {
+  it('keeps a localhost page able to open its WebSockets', async () => {
+    // Vetting hands Chromium every document through route.fulfill, and Local
+    // Network Access then blocks the page's sockets unless the check is off.
+    await run('/live', { guardrails: { vetRedirects: true }, budget: { maxActions: 2 } });
+    expect(hits).toContain('UPGRADE /feed');
+  }, 60_000);
+});
+
+describe('a secret shown in a dialog', () => {
+  it('reaches the results redacted', async () => {
+    expect(GITHUB_TOKEN).toMatch(/^ghp_[0-9a-zA-Z]{36}$/);
+    const result = await run('/token-dialog', {
+      explore: { weights: { click: 100, dblclick: 0, hover: 0, key: 0, scroll: 0, resize: 0 } },
+      budget: { maxActions: 3 },
+    });
+    const dialog = result.findings.find((f) => f.category === 'dialog');
+    expect(dialog).toBeDefined();
+    expect(JSON.stringify(result)).not.toContain(GITHUB_TOKEN);
   }, 60_000);
 });
 

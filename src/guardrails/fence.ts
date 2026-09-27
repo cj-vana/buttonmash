@@ -56,6 +56,15 @@ export interface FenceOptions {
   isBillingLatched: () => boolean;
   /** Where aborted URLs are recorded, for listeners that must not report them. */
   aborted?: FenceLog;
+  /**
+   * Check where a document redirects before the browser follows it (first hop
+   * only; never on WebKit, which cannot fulfill a 3xx). Off by default: every
+   * document is then delivered with route.fulfill, which buffers it, drops its
+   * Sec-Fetch-* headers, and makes Chromium treat it as public, so the page's
+   * WebSockets to loopback or private hosts fail Local Network Access checks
+   * unless the browser runs with those checks disabled.
+   */
+  vetRedirects?: boolean;
 }
 
 /** Static resource types that must never be path-blocked (they carry no
@@ -203,9 +212,21 @@ export async function installContextFence(
     return route.fulfill({ response }).catch(() => {});
   };
 
-  // WebKit refuses to fulfill a request with a 3xx, so it follows redirects
-  // unchecked, as every engine did before.
-  const vetsRedirects = context.browser()?.browserType().name() !== 'webkit';
+  // WebKit refuses to fulfill a request with a 3xx, so it always follows
+  // redirects unchecked.
+  const vetsRedirects =
+    opts.vetRedirects === true && context.browser()?.browserType().name() !== 'webkit';
+
+  // WebSocket handshakes never reach context.route. A socket to a dangerous
+  // path (ws://host/logout) is routed here and closed without contacting the
+  // server; every other socket connects natively, as fetch and XHR do.
+  await context.routeWebSocket(
+    (url) => isDangerousRoute(url, opts.blockedPathRe),
+    (ws) => {
+      opts.aborted?.record(ws.url());
+      return ws.close({ code: 1008, reason: 'blocked by buttonmash' });
+    },
+  );
 
   // Route-level fence — the network layer is the real safety boundary.
   await context.route('**/*', (route) => {

@@ -31,6 +31,7 @@ import {
   type CustomConsoleRule,
 } from '../detectors/signals';
 import { DANGEROUS_PATH_RE } from '../guardrails/destructive';
+import { redactString } from '../guardrails/secrets';
 import {
   attachPageFence,
   FenceLog,
@@ -100,7 +101,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const loginRe = new RegExp(cfg.auth.loginUrlPattern, 'i');
 
   const rng = new Rng(cfg.seed);
-  const recorder = new SignalRecorder();
+  const recorder = new SignalRecorder(cfg.guardrails.secrets.redact ? redactString : undefined);
   const state: DetectorState = { pendingCanaries: new Set(), seenBrokenImages: new Set() };
   const screenshots = new Map<number, string>();
   const actionLog: LoggedAction[] = [];
@@ -139,7 +140,9 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const excludeRe = compileRegexes(cfg.guardrails.excludePaths);
   const allowedSet = new Set(cfg.guardrails.allowedOrigins);
 
-  const browser: Browser = await launchBrowser(cfg.browser, cfg.headless);
+  const browser: Browser = await launchBrowser(cfg.browser, cfg.headless, {
+    vetRedirects: cfg.guardrails.vetRedirects,
+  });
   // Until the run loop's own teardown takes over, a throw must close the
   // browser, or a programmatic caller's process never exits.
   const closeOnThrow = async <T>(work: Promise<T>): Promise<T> =>
@@ -160,6 +163,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     billingMode: cfg.guardrails.billing.mode,
     isBillingLatched: () => billingLive,
     aborted: new FenceLog(),
+    vetRedirects: cfg.guardrails.vetRedirects,
   };
   // Page-bound wiring, re-attachable to a recreated page after a crash.
   // Playwright does NOT close a crashed page — it stays open and every

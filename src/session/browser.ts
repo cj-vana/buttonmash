@@ -18,11 +18,20 @@ import type { ResolvedConfig } from '../config/load';
 const ENGINES = { chromium, firefox, webkit } as const;
 export type Engine = keyof typeof ENGINES;
 
-export async function launchBrowser(engine: Engine, headless: boolean): Promise<Browser> {
+export async function launchBrowser(
+  engine: Engine,
+  headless: boolean,
+  { vetRedirects = false }: { vetRedirects?: boolean } = {},
+): Promise<Browser> {
+  const chromiumArgs = ['--disable-dev-shm-usage'];
+  // Vetting redirects hands Chromium every document through route.fulfill,
+  // and Local Network Access then treats the page as public and blocks its
+  // WebSockets to localhost and private hosts.
+  if (vetRedirects) chromiumArgs.push('--disable-features=LocalNetworkAccessChecks');
   return ENGINES[engine].launch({
     headless,
     timeout: 60_000,
-    args: engine === 'chromium' ? ['--disable-dev-shm-usage'] : [],
+    args: engine === 'chromium' ? chromiumArgs : [],
     // Playwright's own handlers close the browser and exit 130 before the
     // runner can stop tracing and write its partial report; the runner and
     // the CLI close the browser themselves.

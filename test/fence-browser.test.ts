@@ -70,7 +70,8 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server?.close(() => resolve()));
 });
 
-beforeEach(async () => {
+/** A fresh context with the fence installed, and a page on /start. */
+async function setUp(overrides: Partial<FenceOptions> = {}): Promise<void> {
   await context?.close();
   context = await browser.newContext({ serviceWorkers: 'block' });
   recorder = new SignalRecorder();
@@ -83,13 +84,16 @@ beforeEach(async () => {
     billingMode: 'refuse',
     isBillingLatched: () => false,
     aborted: fenced,
+    ...overrides,
   };
   page = await context.newPage();
   await installContextFence(context, opts, recorder);
   attachPageFence(page, opts, recorder);
   await page.goto(`${base}/start`);
   hits.length = 0;
-});
+}
+
+beforeEach(() => setUp());
 
 const settle = () => page.waitForTimeout(400);
 /** `hits` without the cookie column: "GET 127.0.0.1:PORT/path". */
@@ -97,7 +101,17 @@ const requested = () => hits.map((h) => h.split(' ').slice(0, 2).join(' '));
 const guardrailNotes = () =>
   recorder.signals.filter((s) => s.kind === 'guardrail').map((s) => s.detail);
 
-describe('redirects', () => {
+describe('redirects by default', () => {
+  it('are followed by the browser unchecked', async () => {
+    await page.goto(`${base}/hop1`);
+    expect(page.url()).toBe(`${base}/home`);
+    expect(fenced.has(`${base}/hop1`)).toBe(false);
+  });
+});
+
+describe('redirects with vetRedirects', () => {
+  beforeEach(() => setUp({ vetRedirects: true }));
+
   it('blocks a same-origin redirect to a dangerous path', async () => {
     await expect(page.goto(`${base}/bounce`)).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
     await settle();
@@ -140,6 +154,34 @@ describe('redirects', () => {
       `GET 127.0.0.1:${port}/hop2`,
       `GET 127.0.0.1:${port}/home`,
     ]);
+  });
+});
+
+describe('WebSockets', () => {
+  /** Open a socket from the page and report how it ended. */
+  const openSocket = (url: string) =>
+    page.evaluate(
+      (target) =>
+        new Promise<string>((resolve) => {
+          const ws = new WebSocket(target);
+          ws.onclose = (event) => resolve(`closed ${event.code}`);
+          setTimeout(() => resolve('pending'), 2_000);
+        }),
+      url,
+    );
+
+  it('closes a socket to a dangerous path before it reaches the server', async () => {
+    const url = `ws://127.0.0.1:${port}/logout`;
+    expect(await openSocket(url)).toBe('closed 1008');
+    await settle();
+    expect(requested()).toEqual([]);
+    expect(fenced.has(url)).toBe(true);
+  });
+
+  it('lets an ordinary socket connect to the server', async () => {
+    await openSocket(`ws://127.0.0.1:${port}/chat`);
+    await settle();
+    expect(requested()).toEqual([`UPGRADE 127.0.0.1:${port}/chat`]);
   });
 });
 

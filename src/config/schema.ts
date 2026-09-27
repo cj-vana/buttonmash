@@ -209,6 +209,10 @@ const GuardrailsSchema = z
     dryRun: z.boolean().default(false),
     /** Block image/media/font requests to cut noise and speed runs. */
     blockMedia: z.boolean().default(true),
+    /** Check where a page redirects before the browser follows (first hop;
+     *  Chromium and Firefox). Off by default: it fetches every page itself,
+     *  which buffers documents and drops their Sec-Fetch-* headers. */
+    vetRedirects: z.boolean().default(false),
   })
   .default({});
 
