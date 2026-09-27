@@ -93,3 +93,65 @@ describe('resource-scoped network dedup', () => {
     expect(aggregateFindings({ signals, actions: [], screenshots: new Map() })).toHaveLength(2);
   });
 });
+
+describe('merging signals of different severity', () => {
+  it('keeps the highest severity seen, whichever signal came first', () => {
+    // A Next.js prefetch sees the missing route as a fetch (medium) before the
+    // navigation sees it as a document (high).
+    const signals: Signal[] = [
+      sig({
+        kind: 'http.4xx',
+        detail: '404 http://app.test/reports?_rsc=1x9ab',
+        severity: 'medium',
+        meta: { status: 404, resourceType: 'fetch' },
+      }),
+      sig({
+        kind: 'http.4xx',
+        detail: '404 http://app.test/reports',
+        severity: 'high',
+        meta: { status: 404, resourceType: 'document' },
+      }),
+      sig({
+        kind: 'http.4xx',
+        detail: '404 http://app.test/reports',
+        severity: 'low',
+        meta: { status: 404, resourceType: 'image' },
+      }),
+    ];
+    const findings = aggregateFindings({ signals, actions: [], screenshots: new Map() });
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.count).toBe(3);
+    expect(findings[0]!.severity).toBe('high');
+  });
+});
+
+describe('a11y dedup', () => {
+  it('merges one axe rule on one page whatever the node count, and keeps the count visible', () => {
+    const url = 'http://app.test/settings';
+    const signals: Signal[] = [
+      sig({
+        kind: 'a11y',
+        url,
+        detail: 'color-contrast: Elements must meet contrast ratio (2 nodes)',
+        severity: 'medium',
+      }),
+      sig({
+        kind: 'a11y',
+        url,
+        detail: 'color-contrast: Elements must meet contrast ratio (5 nodes)',
+        severity: 'medium',
+      }),
+      sig({
+        kind: 'a11y',
+        url,
+        detail: 'button-name: Buttons need text (1 node)',
+        severity: 'high',
+      }),
+    ];
+    const findings = aggregateFindings({ signals, actions: [], screenshots: new Map() });
+    expect(findings).toHaveLength(2);
+    const contrast = findings.find((f) => f.title.includes('color-contrast'));
+    expect(contrast?.count).toBe(2);
+    expect(contrast?.description).toContain('(2 nodes)');
+  });
+});

@@ -4,7 +4,14 @@
  * trace — fixing gremlins.js's habit of over-counting and under-reporting.
  */
 import { findingDedupKey } from '../core/hash';
-import type { Finding, LoggedAction, Severity, Signal, SignalKind } from '../core/types';
+import {
+  SEVERITY_ORDER,
+  type Finding,
+  type LoggedAction,
+  type Severity,
+  type Signal,
+  type SignalKind,
+} from '../core/types';
 
 interface KindMeta {
   category: string;
@@ -74,6 +81,14 @@ const RESOURCE_KINDS = new Set<SignalKind>([
   'broken-image',
 ]);
 
+/** The part of a signal's detail that identifies the bug. An axe violation's
+ *  node count depends on the state it was scanned in, so the same violation on
+ *  two states would split into two findings; the count stays in the
+ *  description but leaves the key. */
+function dedupSignature(sig: Signal): string {
+  return sig.kind === 'a11y' ? sig.detail.replace(/ \(\d+ nodes?\)$/, '') : sig.detail;
+}
+
 function firstLine(s: string): string {
   const line = s.split('\n')[0]?.trim() ?? '';
   return line.length > 120 ? `${line.slice(0, 117)}…` : line;
@@ -118,13 +133,16 @@ export function aggregateFindings(input: AggregateInput): Finding[] {
     // would otherwise merge a 401 and a 404 on the same route into one finding.
     const statusTag = typeof sig.meta?.status === 'number' ? `:${sig.meta.status}` : '';
     const keyUrl = RESOURCE_KINDS.has(sig.kind) ? '' : sig.url;
-    const dedupKey = findingDedupKey(meta.category + statusTag, keyUrl, sig.detail);
+    const dedupKey = findingDedupKey(meta.category + statusTag, keyUrl, dedupSignature(sig));
     const step = attributeStep(sig, actions);
     const existing = byKey.get(dedupKey);
 
     if (existing) {
       existing.count += 1;
       if (step < existing.firstSeenStep) existing.firstSeenStep = step;
+      if (SEVERITY_ORDER[severity] > SEVERITY_ORDER[existing.severity]) {
+        existing.severity = severity;
+      }
       continue;
     }
 
