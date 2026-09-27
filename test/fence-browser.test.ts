@@ -60,7 +60,8 @@ beforeEach(async () => {
   fenced = new FenceLog();
   const opts: FenceOptions = {
     allowedOrigins: [base],
-    blockedPathRe: combineRegexes([DANGEROUS_PATH_RE]),
+    // A user pattern anchored on the pathname, next to the built-in one.
+    blockedPathRe: combineRegexes([DANGEROUS_PATH_RE, /^\/admin$/]),
     blockMedia: false,
     billingMode: 'refuse',
     isBillingLatched: () => false,
@@ -76,6 +77,30 @@ beforeEach(async () => {
 const settle = () => page.waitForTimeout(400);
 const guardrailNotes = () =>
   recorder.signals.filter((s) => s.kind === 'guardrail').map((s) => s.detail);
+
+describe('dangerous routes outside the pathname', () => {
+  it('blocks a logout route carried in the query string (OpenCart)', async () => {
+    const url = `${base}/index.php?route=account/logout`;
+    await expect(page.goto(url)).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+    expect(hits).toEqual([]);
+    expect(fenced.has(url)).toBe(true);
+
+    await settle(); // Chromium commits its error page after goto rejects
+    await page.goto(`${base}/start`);
+    hits.length = 0;
+    await page.evaluate(() => fetch('/api/session?action=logout').catch(() => {}));
+    await settle();
+    expect(hits).toEqual([]);
+  });
+
+  it('still lets ordinary queries through and still matches anchored patterns', async () => {
+    await page.goto(`${base}/search?q=shoes&sort=price`);
+    await page.goto(`${base}/admin?tab=users`).catch(() => {});
+    expect(hits.map((h) => h.split(' ')[1])).toEqual([
+      `127.0.0.1:${port}/search?q=shoes&sort=price`,
+    ]);
+  });
+});
 
 describe('commits with an opaque origin', () => {
   it('does not report or undo the error page Chromium shows for a fenced navigation', async () => {
