@@ -313,6 +313,8 @@ export default defineConfig({
     // Refuse to run if LIVE Stripe/Braintree keys are detected. Use test mode!
     billing: { mode: 'refuse' },
     // dryRun: true, // read-only: explore without submitting/mutating
+    // Controls whose names only look destructive (regex), e.g. a canvas "Reset zoom".
+    // destructive: { safeNames: ['^reset zoom$'] },
   },
 
   detectors: {
