@@ -97,6 +97,8 @@ export function replayOverrides(prev: RunResult): Partial<Config> {
     target: _target,
     seed: _seed,
     configPath: _configPath,
+    // Terminal verbosity of the recorded run; replay has no --log-level to undo 'silent'.
+    logLevel: _logLevel,
     // Masked: header values are '***', baseline.path is '<baseline>'.
     headers: _headers,
     baseline: _baseline,
