@@ -46,6 +46,15 @@ export interface LoginScript {
   successSelector?: string;
 }
 
+/** Where a failed login ended up, without a query string that may hold a token. */
+function pathOf(url: string): string {
+  try {
+    return new URL(url).pathname;
+  } catch {
+    return url;
+  }
+}
+
 /**
  * Log in by driving the login form (CI-friendly; reused on session drop).
  * `url` should already be absolute. Returns true if it appears to have left
@@ -73,6 +82,9 @@ export async function performScriptedLogin(
     try {
       await page.waitForURL(new RegExp(ls.successUrl), { timeout: timeoutMs });
     } catch {
+      logger.warn(
+        `Login failed: the URL never matched successUrl ${ls.successUrl} within ${timeoutMs} ms (ended on ${pathOf(page.url())}).`,
+      );
       return false;
     }
   } else if (ls.successSelector) {
@@ -82,6 +94,9 @@ export async function performScriptedLogin(
         .first()
         .waitFor({ state: 'visible', timeout: timeoutMs });
     } catch {
+      logger.warn(
+        `Login failed: successSelector ${ls.successSelector} never became visible within ${timeoutMs} ms (on ${pathOf(page.url())}).`,
+      );
       return false;
     }
   } else {

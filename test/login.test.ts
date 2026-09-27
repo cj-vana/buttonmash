@@ -3,12 +3,13 @@
  * login form, and a full run uses it to reach an otherwise-redirected app.
  * Requires Chromium.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { chromium, type Browser } from 'playwright';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { logger } from '../src/core/logger';
 import { performScriptedLogin } from '../src/session/auth';
 import { buttonmash } from '../src/index';
 import { startServer, type TestServer } from './helpers/server';
@@ -50,12 +51,25 @@ describe('scripted login', () => {
     await ctx.close();
   }, 30_000);
 
-  it('returns false when the configured success condition is not reached', async () => {
+  it('returns false and says which success condition was not reached', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     const ctx = await browser.newContext();
-    const page = await ctx.newPage();
-    const badSuccess = { ...script(server.url), successUrl: '/never' };
-    expect(await performScriptedLogin(page, badSuccess, 500)).toBe(false);
-    await ctx.close();
+    try {
+      const page = await ctx.newPage();
+      const password = 'pw-must-not-be-logged';
+      const badUrl = { ...script(server.url), password, successUrl: '/never' };
+      expect(await performScriptedLogin(page, badUrl, 500)).toBe(false);
+      expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('successUrl /never'));
+
+      const badSelector = { ...badUrl, successUrl: undefined, successSelector: '#nope' };
+      expect(await performScriptedLogin(page, badSelector, 500)).toBe(false);
+      expect(warn).toHaveBeenLastCalledWith(expect.stringContaining('successSelector #nope'));
+
+      expect(warn.mock.calls.flat().join('\n')).not.toContain(password);
+    } finally {
+      warn.mockRestore();
+      await ctx.close();
+    }
   });
 
   it('a full run uses the login script to reach the gated app', async () => {
