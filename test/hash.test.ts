@@ -7,6 +7,8 @@ import {
   stateFingerprint,
   findingDedupKey,
 } from '../src/core/hash';
+import { Rng } from '../src/core/rng';
+import { fuzzValue } from '../src/explorer/fuzz';
 
 describe('hash', () => {
   it('fnv1a is stable and 8 hex chars', () => {
@@ -79,6 +81,46 @@ describe('hash', () => {
       'at fn (https://cdn.test/app.js?v=222:3:4)',
     );
     expect(a).toBe(b);
+  });
+
+  it('findingDedupKey ignores which reflected-input canary was typed', () => {
+    // Canaries come from fuzz.ts and field-values.ts: cnry + 8 hex (fnv1a) + zz.
+    // Each seed and step types a different one, so the same bug reached through
+    // typed input must not get a new key per canary.
+    const [c1, c2] = ['cnry1a2b3c4dzz', 'cnry9f8e7d6czz'];
+    const http500 = (c: string) => `500 https://x.test/api/search?q=${c}&page=2`;
+    expect(findingDedupKey('http-5xx:500', '', http500(c1))).toBe(
+      findingDedupKey('http-5xx:500', '', http500(c2)),
+    );
+    const probe = (c: string) => `500 https://x.test/api/items?name=%22'%3C%3E${c}`;
+    expect(findingDedupKey('http-5xx:500', '', probe(c1))).toBe(
+      findingDedupKey('http-5xx:500', '', probe(c2)),
+    );
+    const thrown = (c: string) => `TypeError: cannot parse "seed ${c}" as a date`;
+    expect(findingDedupKey('js-error', 'https://x.test/', thrown(c1))).toBe(
+      findingDedupKey('js-error', 'https://x.test/', thrown(c2)),
+    );
+    // The page URL can carry the canary too (a search results page).
+    expect(findingDedupKey('js-error', `https://x.test/search?q=${c1}`, 'boom')).toBe(
+      findingDedupKey('js-error', `https://x.test/search?q=${c2}`, 'boom'),
+    );
+  });
+
+  it('findingDedupKey collapses canaries from the real fuzz builder', () => {
+    const canary = (runId: string, step: number) => fuzzValue(new Rng('s'), runId, step).canary;
+    const [a, b] = [canary('seed-a', 3), canary('seed-b', 40)];
+    expect(a).not.toBe(b);
+    expect(findingDedupKey('js-error', 'https://x.test/', `bad input ${a}`)).toBe(
+      findingDedupKey('js-error', 'https://x.test/', `bad input ${b}`),
+    );
+  });
+
+  it('findingDedupKey leaves text that is not a canary alone', () => {
+    const key = (sig: string) => findingDedupKey('js-error', 'https://x.test/', sig);
+    expect(key('cannot read "name"')).not.toBe(key('cannot read "nome"'));
+    // Wrong length or alphabet: not a canary, so still distinct.
+    expect(key('token cnry1a2b3czz')).not.toBe(key('token cnry9f8e7dzz'));
+    expect(key('token cnry1a2b3c4gzz')).not.toBe(key('token cnry9f8e7d6gzz'));
   });
 
   it('findingDedupKey keeps genuinely different resources distinct', () => {
