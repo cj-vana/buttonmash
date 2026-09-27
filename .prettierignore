@@ -1,6 +1,8 @@
 dist
 coverage
 node_modules
+# local agent settings, not part of the project
+.claude
 *.md
 # generated demo report published on GitHub Pages
 docs

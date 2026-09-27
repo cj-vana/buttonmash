@@ -76,7 +76,10 @@ jobs:
         with:
           target: http://127.0.0.1:4173
           version: file:${{ steps.package.outputs.path }}
-          args: --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
+          # Pinned seed, as in ci.yml: a random seed can pick `back` first, land
+          # on about:blank, and log a guardrail finding that fails findings=0
+          # after every test has passed but before npm publish.
+          args: --seed ci --dry-run --max-actions 5 --max-duration 10 --formats json --log-level silent
           upload-report: 'false'
 
       - name: Verify composite-action outputs
