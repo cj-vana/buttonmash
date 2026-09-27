@@ -1,7 +1,12 @@
 /** Bounded preflight checks for the environment a full run will use. */
 import type { Browser, BrowserContext } from 'playwright';
 
-import { BaselineError, baselineComparisonKey, loadBaseline } from './baseline';
+import {
+  BaselineError,
+  baselineComparisonKey,
+  loadBaseline,
+  type BaselineSnapshot,
+} from './baseline';
 import type { ResolvedConfig } from './config/load';
 import { routePath } from './core/hash';
 import { combineRegexes, compileRegexes } from './core/regex';
@@ -45,6 +50,28 @@ function isLoginUrl(url: string, pattern: string): boolean {
   }
 }
 
+/** Why a run with this config could not resolve findings against the
+ *  baseline, mirroring compareWithBaseline, or undefined if it could. */
+function baselineMismatch(
+  baseline: BaselineSnapshot,
+  currentKey: string | undefined,
+): string | undefined {
+  if (!baseline.complete) return 'the baseline run did not complete';
+  if (baseline.toolVersion !== version) {
+    return `it was written by buttonmash ${baseline.toolVersion}, and this is ${version}`;
+  }
+  if (currentKey === undefined || baseline.comparisonKey === undefined) {
+    return 'runs with credentials or headers compare only when both use the same --baseline-id';
+  }
+  if (baseline.comparisonKey !== currentKey) {
+    return (
+      'its config differs from this one; pass doctor the same flags you pass to run ' +
+      '(--seed, --route, --max-actions, --max-duration, --fail-on, --dry-run, --headed)'
+    );
+  }
+  return undefined;
+}
+
 /** Run bounded checks without entering the mutation/exploration loop. */
 export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
   const checks: DoctorCheck[] = [];
@@ -52,19 +79,14 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
   if (cfg.baseline.path) {
     try {
       const baseline = await loadBaseline(cfg.baseline.path);
-      const currentKey = baselineComparisonKey(cfg);
-      const comparable =
-        baseline.complete &&
-        baseline.toolVersion === version &&
-        currentKey !== undefined &&
-        baseline.comparisonKey === currentKey;
+      const mismatch = baselineMismatch(baseline, baselineComparisonKey(cfg));
       check(
         checks,
         'baseline',
-        comparable ? 'pass' : 'warn',
-        comparable
-          ? `baseline is readable and comparable (${baseline.source})`
-          : `baseline is readable but not comparable for resolution (${baseline.source}); check tool version, completion, config, and baseline identity`,
+        mismatch ? 'warn' : 'pass',
+        mismatch
+          ? `baseline is readable (${baseline.source}) but not comparable, so findings missing from this run will show as "not observed" instead of resolved: ${mismatch}`
+          : `baseline is readable and comparable (${baseline.source})`,
       );
     } catch (err) {
       const detail = err instanceof BaselineError ? err.message : (err as Error).message;
