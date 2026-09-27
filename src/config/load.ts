@@ -139,11 +139,10 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
     merged.routes = [...new Set([...(merged.routes ?? []), ...opts.append.routes])];
   }
   if (opts.append?.allowedOrigins?.length) {
+    const extra = opts.append.allowedOrigins.map((o) => toOrigin(o, '--allow-origin'));
     merged.guardrails = {
       ...merged.guardrails,
-      allowedOrigins: [
-        ...new Set([...(merged.guardrails?.allowedOrigins ?? []), ...opts.append.allowedOrigins]),
-      ],
+      allowedOrigins: [...new Set([...(merged.guardrails?.allowedOrigins ?? []), ...extra])],
     };
   }
 
@@ -229,9 +228,10 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
 
   // Default the origin allowlist to the target's origin; always include it and
   // any route origins.
-  const baseAllowed = cfg.guardrails.allowedOrigins.length
-    ? [...cfg.guardrails.allowedOrigins, origin]
-    : [origin];
+  const configured = cfg.guardrails.allowedOrigins.map((o) =>
+    toOrigin(o, 'guardrails.allowedOrigins'),
+  );
+  const baseAllowed = [...configured, origin];
   const allowedOrigins = Array.from(new Set([...baseAllowed, ...routeOrigins]));
 
   return {
@@ -247,6 +247,25 @@ export async function loadConfig(opts: LoadOptions = {}): Promise<ResolvedConfig
     report: { ...cfg.report, captureTrace: resolveCaptureTrace(cfg) },
     configPath,
   };
+}
+
+/** The fence compares exact origins, so `https://Auth.example.com/` has to
+ *  become `https://auth.example.com` or it allows nothing. */
+function toOrigin(value: string, source: string): string {
+  let origin = 'null';
+  try {
+    origin = new URL(value).origin;
+  } catch {
+    // Reported below.
+  }
+  // Opaque URLs (file:, data:) serialize their origin as 'null', which would
+  // match every other opaque URL the fence sees.
+  if (origin === 'null') {
+    throw new ConfigError(
+      `${source}: "${value}" is not an origin; use a URL such as https://auth.example.com`,
+    );
+  }
+  return origin;
 }
 
 /** A Playwright trace stores request headers, cookies and filled values as-is,
