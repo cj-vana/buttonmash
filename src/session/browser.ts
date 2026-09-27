@@ -23,6 +23,12 @@ export async function launchBrowser(engine: Engine, headless: boolean): Promise<
     headless,
     timeout: 60_000,
     args: engine === 'chromium' ? ['--disable-dev-shm-usage'] : [],
+    // Playwright's own handlers close the browser and exit 130 before the
+    // runner can stop tracing and write its partial report; the runner and
+    // the CLI close the browser themselves.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
   });
 }
 
