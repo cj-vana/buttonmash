@@ -132,6 +132,42 @@ describe('SARIF report', () => {
     expect(results[1]!.locations[0]!.physicalLocation.artifactLocation.uri).toBe('unknown');
   });
 
+  it('locates results by repo-relative page paths, never by absolute URLs', () => {
+    // upload-sarif sends a file:// source root, and GitHub rejects the whole
+    // upload when an artifact URI carries a different scheme.
+    const sarif = JSON.parse(
+      toSarif(
+        result([
+          finding({ location: { url: 'https://staging.example.test/settings/billing?tab=2' } }),
+          finding({ dedupKey: 'blank', location: { url: 'about:blank' } }),
+          finding({ dedupKey: 'root', location: { url: 'http://localhost:3000/' } }),
+          finding({ dedupKey: 'ipv6', location: { url: 'http://[::1]:3000/app' } }),
+        ]),
+      ),
+    );
+    const results = sarif.runs[0].results as Array<{
+      message: { text: string };
+      properties: { pageUrl: string };
+      locations: Array<{ physicalLocation: { artifactLocation: { uri: string } } }>;
+    }>;
+    const uris = results.map((item) => item.locations[0]!.physicalLocation.artifactLocation.uri);
+
+    expect(uris).toEqual([
+      'staging.example.test/settings/billing',
+      'unknown',
+      'localhost',
+      '--1/app',
+    ]);
+    // `localhost:3000/x` would itself parse as an absolute URI (scheme "localhost").
+    for (const uri of uris) expect(uri).not.toMatch(/^[a-z][a-z0-9+.-]*:/i);
+    expect(results[0]!.properties.pageUrl).toBe(
+      'https://staging.example.test/settings/billing?tab=2',
+    );
+    expect(results[0]!.message.text).toContain(
+      'https://staging.example.test/settings/billing?tab=2',
+    );
+  });
+
   it('writes the canonical results.sarif file', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'buttonmash-sarif-'));
     try {

@@ -13,6 +13,24 @@ function level(severity: Severity): 'error' | 'warning' | 'note' {
   return 'note';
 }
 
+/**
+ * A repo-relative artifact path for a page: host plus path, no scheme or port.
+ * upload-sarif sends a file:// source root, and GitHub rejects the whole upload
+ * when any artifact URI uses another scheme, so a page URL can't go here as-is
+ * (and `localhost:3000/x` would itself parse as scheme `localhost`).
+ */
+function pageArtifactPath(pageUrl: string): string {
+  try {
+    const u = new URL(pageUrl);
+    if (!u.hostname) return 'unknown';
+    // An IPv6 host (`[::1]`) would put colons in the first path segment too.
+    const host = u.hostname.replace(/[[\]]/g, '').replace(/:/g, '-');
+    return `${host}${u.pathname}`.replace(/\/+$/, '');
+  } catch {
+    return 'unknown';
+  }
+}
+
 export function toSarif(result: RunResult): string {
   const ruleIds = [...new Set(result.findings.map((f) => f.category))];
   const sarif = {
@@ -33,9 +51,7 @@ export function toSarif(result: RunResult): string {
           },
         },
         results: result.findings.map((f) => {
-          // GitHub rejects the whole SARIF upload on a schema violation; ensure
-          // the uri is a valid URI reference (page.url() can be empty).
-          const uri = /^[a-z][a-z0-9+.-]*:/i.test(f.location.url) ? f.location.url : 'unknown';
+          const uri = pageArtifactPath(f.location.url);
           return {
             ruleId: f.category,
             level: level(f.severity),
@@ -49,7 +65,10 @@ export function toSarif(result: RunResult): string {
                         : 'new',
                 }
               : {}),
-            message: { text: `${f.title} (seen ${f.count}×)` },
+            message: {
+              text: `${f.title} (seen ${f.count}×${f.location.url ? ` on ${f.location.url}` : ''})`,
+            },
+            properties: { pageUrl: f.location.url },
             locations: [
               {
                 physicalLocation: {
