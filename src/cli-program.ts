@@ -7,7 +7,7 @@ import pc from 'picocolors';
 
 import { BaselineError } from './baseline';
 import { loadConfig, ConfigError, type LoadOptions } from './config/load';
-import type { Config } from './config/schema';
+import { BrowserSchema, type Config } from './config/schema';
 import { logger } from './core/logger';
 import { EXIT, SEVERITY_ORDER, type RunResult } from './core/types';
 import { runDoctor } from './doctor';
@@ -267,9 +267,16 @@ export function createProgram(): Command {
     .description('Open a browser, log in by hand, and save the session for runs')
     .option('-o, --out <path>', 'where to save storageState', 'playwright/.auth/user.json')
     .option('-b, --browser <engine>', 'chromium | firefox | webkit', 'chromium')
-    .action(async (url: string, opts: { out: string; browser: Engine }) => {
+    .action(async (url: string, opts: { out: string; browser: string }) => {
+      const engine = BrowserSchema.safeParse(opts.browser);
+      if (!engine.success) {
+        logger.error(
+          `--browser must be one of: ${BrowserSchema.options.join(', ')} (got "${opts.browser}").`,
+        );
+        process.exit(EXIT.ERROR);
+      }
       try {
-        await captureAuth(url, opts.out, opts.browser);
+        await captureAuth(url, opts.out, engine.data);
         process.exit(EXIT.CLEAN);
       } catch (err) {
         logger.error(`auth failed: ${(err as Error).message}`);

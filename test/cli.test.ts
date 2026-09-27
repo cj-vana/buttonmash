@@ -88,6 +88,17 @@ describe('CLI contract', () => {
     }
   });
 
+  it('rejects an unknown auth --browser before creating or launching anything', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-cli-'));
+    temporaryDirectories.push(directory);
+
+    const result = run(['auth', 'https://x.test/login', '--browser', 'opera'], directory);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('--browser must be one of: chromium, firefox, webkit');
+    expect(result.stderr).not.toContain('Cannot read properties');
+    expect(existsSync(join(directory, 'playwright'))).toBe(false);
+  });
+
   it('scaffolds config and refuses to overwrite it without --force', () => {
     const directory = mkdtempSync(join(tmpdir(), 'buttonmash-cli-'));
     temporaryDirectories.push(directory);
