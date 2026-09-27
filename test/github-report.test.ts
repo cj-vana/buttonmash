@@ -150,4 +150,35 @@ describe('GitHub Actions reporting', () => {
     expect(annotation).toContain('bad%3A value%2C 100%25%0Anext');
     expect(annotation).not.toContain('::error');
   });
+
+  it('keeps page text from breaking the summary row or injecting links and HTML', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-github-'));
+    const summary = join(directory, 'summary.md');
+    vi.stubEnv('GITHUB_ACTIONS', 'true');
+    vi.stubEnv('GITHUB_STEP_SUMMARY', summary);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      emitGitHub(
+        result([
+          finding({
+            title: 'one\rtwo\r\n\nthree [x](https://evil.test) <img src=x> a|b *c* _d_ `e` \\f',
+            baselineState: 'new',
+            location: { url: 'https://example.test/app?q=[y](z)' },
+          }),
+        ]),
+      );
+
+      const markdown = readFileSync(summary, 'utf8');
+      expect(markdown).not.toContain('\r');
+      expect(markdown).not.toContain('<img');
+      expect(markdown).not.toContain('[x](');
+      const rows = markdown.split('\n').filter((line) => line.startsWith('| new |'));
+      expect(rows).toEqual([
+        '| new | high | one two three \\[x\\]\\(https://evil.test\\) &lt;img src=x&gt; ' +
+          'a\\|b \\*c\\* \\_d\\_ \\`e\\` \\\\f | 1 | https://example.test/app?q=\\[y\\]\\(z\\) |',
+      ]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
 });
