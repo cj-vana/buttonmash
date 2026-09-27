@@ -7,7 +7,7 @@
 import type { BrowserContext, Page, Request } from 'playwright';
 
 import type { SignalRecorder } from '../detectors/recorder';
-import { LIVE_HOSTS, inspectRequestForLiveMode, isPaymentHost } from './billing';
+import { inspectRequestForLiveMode, isPaymentHost } from './billing';
 
 function safePostData(req: Request): string | null {
   try {
@@ -159,13 +159,16 @@ export async function installContextFence(
     // 3. Payment safety: block real charges/tokenization at the network layer
     //    while still allowing test-mode/sandbox flows to be fuzzed.
     if (opts.billingMode !== 'off' && isPaymentHost(host)) {
-      const post = safePostData(req);
-      const liveByKey = inspectRequestForLiveMode(req.url(), post).length > 0;
-      const liveHost = LIVE_HOSTS.has(host);
-      if (liveHost || liveByKey || opts.isBillingLatched()) {
-        recorder.add('billing-live', `blocked live payment request → ${host}`, {
-          severity: opts.billingMode === 'refuse' ? 'critical' : 'medium',
-        });
+      // Live evidence carried by the request itself is recorded, and the run
+      // latched, by the signal listeners' `request` handler. Only a block that
+      // rests on the latch alone is recorded here, so one event is one signal.
+      if (inspectRequestForLiveMode(req.url(), safePostData(req)).length > 0) return block();
+      if (opts.isBillingLatched()) {
+        recorder.add(
+          'billing-live',
+          `blocked a payment request to ${host} after live billing was detected`,
+          { severity: opts.billingMode === 'refuse' ? 'critical' : 'medium' },
+        );
         return block();
       }
     }
