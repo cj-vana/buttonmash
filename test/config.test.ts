@@ -105,6 +105,27 @@ describe('loadConfig', () => {
     ).rejects.toBeInstanceOf(ConfigError);
   });
 
+  it('rejects a destructive safe-name pattern that is not a valid regex', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://x.test',
+        guardrails: { destructive: { safeNames: ['^reset zoom$'] } },
+      },
+    });
+    expect(cfg.guardrails.destructive.safeNames).toEqual(['^reset zoom$']);
+
+    await expect(
+      loadConfig({
+        ignoreConfigFile: true,
+        overrides: {
+          target: 'https://x.test',
+          guardrails: { destructive: { safeNames: ['reset ('] } },
+        },
+      }),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
+
   it('resolves a baseline path and requires one for fail-on-new mode', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,

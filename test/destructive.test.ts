@@ -73,3 +73,26 @@ describe('verb matching precision', () => {
     expect(classifyControl(el({ name: '送信する' }), ['送信']).block).toBe(true);
   });
 });
+
+describe('safe-name exemptions', () => {
+  const safe = [/^reset zoom$/i];
+
+  it('lets a benign control whose name only matches a verb through', () => {
+    expect(classifyControl(el({ name: 'Reset zoom' })).block).toBe(true);
+    expect(classifyControl(el({ name: 'Reset zoom' }), [], safe).block).toBe(false);
+  });
+
+  it('keeps blocking names the pattern does not cover', () => {
+    expect(classifyControl(el({ name: 'Reset password' }), [], safe).block).toBe(true);
+  });
+
+  it('never exempts a dangerous href or form action', () => {
+    expect(
+      classifyControl(el({ tag: 'a', name: 'Reset zoom', href: '/account/delete' }), [], safe)
+        .block,
+    ).toBe(true);
+    expect(classifyControl(el({ name: 'Reset zoom', formAction: '/logout' }), [], safe).block).toBe(
+      true,
+    );
+  });
+});
