@@ -31,6 +31,10 @@ inputs:
     description: 'Upload the buttonmash-report/ directory as a build artifact.'
     required: false
     default: 'true'
+  report-name:
+    description: 'Name of the uploaded report artifact. Names must be unique within a workflow run, so when the action runs more than once (a matrix over browsers, several targets), set a different name in each job, for example buttonmash-report-firefox from the matrix value.'
+    required: false
+    default: 'buttonmash-report'
 outputs:
   exit-code:
     description: 'buttonmash exit code (0 clean, 1 findings/safety stop, 2 tool error/interruption).'
@@ -97,7 +101,7 @@ runs:
         for arg in "${BM_EXTRA[@]}"; do
           case "$arg" in
             --out | --out=* | -o*)
-              reject "Remove --out (-o) from args. The action always writes the report to buttonmash-report/ in the workspace, where the findings and report-path outputs and the upload look for it. Read its location from the report-path output." ;;
+              reject "Remove --out (-o) from args. The action always writes the report to buttonmash-report/ in the workspace, where the findings and report-path outputs and the upload look for it. Read its location from the report-path output and name the artifact with the report-name input." ;;
             --browser | --browser=* | -b*)
               reject "Remove --browser (-b) from args and set the browser input instead. The action installs only the engine named by that input." ;;
           esac
@@ -117,7 +121,7 @@ runs:
     - if: ${{ always() && inputs.upload-report == 'true' }}
       uses: actions/upload-artifact@v5
       with:
-        name: buttonmash-report
+        name: ${{ inputs.report-name }}
         path: buttonmash-report/
         if-no-files-found: ignore
         retention-days: 14

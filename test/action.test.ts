@@ -110,6 +110,16 @@ function baseArgv(workspace: string): string[] {
   return ['run', TARGET, '--browser', 'chromium', '--out', `${workspace}/buttonmash-report`];
 }
 
+describe('action upload step', () => {
+  it('names the artifact from the report-name input so matrix jobs can differ', () => {
+    expect(inputDefault('report-name')).toBe('buttonmash-report');
+    expect(actionYml).toMatch(/^ {2}report-name:\n {4}description: '.*matrix/m);
+    expect(actionYml).toMatch(
+      /uses: actions\/upload-artifact@v\d+\n\s+with:\n\s+name: \$\{\{ inputs\.report-name \}\}\n/,
+    );
+  });
+});
+
 describe('action run step: fail-on', () => {
   it('defaults to empty so failOn in the config file is not overridden', () => {
     expect(inputDefault('fail-on')).toBe('');
