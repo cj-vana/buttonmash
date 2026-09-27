@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import pc from 'picocolors';
 
 import { BaselineError } from './baseline';
-import { loadConfig, ConfigError, type LoadOptions } from './config/load';
+import { deepMerge, loadConfig, ConfigError, type ResolvedConfig } from './config/load';
 import { BrowserSchema, type Config } from './config/schema';
 import { logger } from './core/logger';
 import { EXIT, SEVERITY_ORDER, type RunResult } from './core/types';
@@ -77,6 +77,71 @@ function buildOverrides(url: string | undefined, o: RunOpts): Partial<Config> {
   return ov;
 }
 
+/** A recorded route on the recorded target's origin, as a path, so a replay
+ *  against another URL sweeps that URL instead of the recorded host. */
+function rebaseRoute(route: string, recordedOrigin: string): string {
+  const u = new URL(route);
+  return u.origin === recordedOrigin ? u.pathname + u.search + u.hash : route;
+}
+
+/**
+ * Config overrides that rebuild a recorded run from its results.json. The
+ * recorded config is redacted (see redactedConfig in explorer/run-result.ts),
+ * so every value it masks is left out: credentials and headers come from
+ * --auth or the config file instead. Target and seed come from run.target and
+ * config.seed. Returns {} for a results.json without resolvedConfig.
+ */
+export function replayOverrides(prev: RunResult): Partial<Config> {
+  if (!prev.resolvedConfig) return {};
+  const {
+    target: _target,
+    seed: _seed,
+    configPath: _configPath,
+    // Masked: header values are '***', baseline.path is '<baseline>'.
+    headers: _headers,
+    baseline: _baseline,
+    auth,
+    report,
+    routes,
+    guardrails,
+    ...rest
+  } = structuredClone(prev.resolvedConfig) as unknown as ResolvedConfig;
+  // outDir is a path on the machine that recorded the run. captureTrace is the
+  // resolved value, not the user's: carrying `true` into a replay that adds
+  // --auth would record credentials the default keeps out of trace.zip.
+  const { outDir: _outDir, captureTrace: _captureTrace, ...replayedReport } = report;
+  const recordedOrigin = new URL(prev.run.target).origin;
+  return {
+    ...rest,
+    auth: { loginUrlPattern: auth.loginUrlPattern },
+    report: replayedReport,
+    routes: routes.map((route) => rebaseRoute(route, recordedOrigin)),
+    // loadConfig adds the replay target's origin back.
+    guardrails: {
+      ...guardrails,
+      allowedOrigins: guardrails.allowedOrigins.filter((origin) => origin !== recordedOrigin),
+    },
+  };
+}
+
+/** Which credentials the recorded run had that replay cannot copy. */
+function recordedCredentials(prev: RunResult): string[] {
+  const recorded = prev.resolvedConfig as Partial<ResolvedConfig> | undefined;
+  const auth = recorded?.auth;
+  return [
+    auth?.storageState && 'auth.storageState',
+    auth?.loginScript && 'auth.loginScript',
+    auth?.basicAuth && 'auth.basicAuth',
+    Object.keys(recorded?.headers ?? {}).length > 0 && 'headers',
+  ].filter((field): field is string => Boolean(field));
+}
+
+/** The command that reruns this result. */
+export function reproduceCommand(result: RunResult): string {
+  const dryRun = result.run.dryRun ? ' --dry-run' : '';
+  return `buttonmash run ${result.run.target} --seed ${result.config.seed}${dryRun}`;
+}
+
 function printSummary(result: RunResult, outDir: string, htmlReport: boolean): void {
   const f = result.stats.findingsBySeverity;
   console.log('');
@@ -107,15 +172,14 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
     );
   }
   if (htmlReport) console.log(pc.dim(`  Report: ${resolve(outDir, 'report.html')}`));
-  console.log(
-    pc.dim(`  Reproduce: buttonmash run ${result.run.target} --seed ${result.config.seed}`),
-  );
+  console.log(pc.dim(`  Reproduce: ${reproduceCommand(result)}`));
 }
 
+/** `replayed` sits between the config file and the flags: file < replayed < flags. */
 async function doRun(
   url: string | undefined,
   opts: RunOpts,
-  loadOpts: LoadOptions = {},
+  replayed: Partial<Config> = {},
 ): Promise<never> {
   try {
     if (opts.failOn && !(opts.failOn in SEVERITY_ORDER)) {
@@ -123,11 +187,10 @@ async function doRun(
     }
     const cfg = await loadConfig({
       configPath: opts.config,
-      overrides: buildOverrides(url, opts),
+      overrides: deepMerge<Partial<Config>>(replayed, buildOverrides(url, opts)),
       // --route/--allow-origin are documented as *additional* — append to the
       // config file's lists rather than replacing them.
       append: { routes: opts.route, allowedOrigins: opts.allowOrigin },
-      ...loadOpts,
     });
     const { result, outDir } = await runButtonmash(cfg);
     await writeReports(result, outDir, cfg);
@@ -244,14 +307,21 @@ export function createProgram(): Command {
 
   program
     .command('replay <seedOrResults> [url]')
-    .description('Re-run with a previous seed (or a results.json) to reproduce a finding')
+    .description(
+      'Re-run with a previous seed, or with the seed and settings of a results.json, to reproduce a finding',
+    )
     .option('-c, --config <path>', 'path to a buttonmash config file')
     .option('-b, --browser <engine>', 'chromium | firefox | webkit')
     .option('--headed', 'run with a visible browser window')
+    .option('--max-actions <n>', 'maximum actions to perform')
+    .option('--max-duration <seconds>', 'maximum wall-clock seconds')
+    .option('--dry-run', 'read-only mode: explore without submitting or mutating')
+    .option('--auth <path>', 'Playwright storageState JSON for an authenticated session')
     .option('-o, --out <dir>', 'output directory for reports/artifacts')
     .action((seedOrResults: string, url: string | undefined, opts: RunOpts) => {
       let seed = seedOrResults;
       let target = url;
+      let replayed: Partial<Config> = {};
       if (seedOrResults.endsWith('.json') && !existsSync(seedOrResults)) {
         // A mistyped path must not silently become a fuzz run seeded with it.
         logger.error(`Results file not found: ${seedOrResults}`);
@@ -262,13 +332,26 @@ export function createProgram(): Command {
           const prev = JSON.parse(readFileSync(seedOrResults, 'utf8')) as RunResult;
           seed = prev.config.seed;
           target = target ?? prev.run.target;
+          replayed = replayOverrides(prev);
           logger.info(`Replaying seed ${seed} against ${target}`);
+          if (!prev.resolvedConfig) {
+            logger.warn(
+              `${seedOrResults} has no resolvedConfig, so only its seed and target are replayed.`,
+            );
+          }
+          const credentials = recordedCredentials(prev);
+          if (credentials.length) {
+            logger.warn(
+              `The recorded run used ${credentials.join(', ')}. Replay does not copy ` +
+                'credentials from results.json; pass --auth or a config file that sets them.',
+            );
+          }
         } catch (err) {
           logger.error(`Could not read results file: ${(err as Error).message}`);
           process.exit(EXIT.ERROR);
         }
       }
-      return doRun(target, { ...opts, seed });
+      return doRun(target, { ...opts, seed }, replayed);
     });
 
   program

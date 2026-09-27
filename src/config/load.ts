@@ -88,7 +88,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /** Deep-merge plain objects; arrays and primitives from `over` replace `base`. */
-function deepMerge<T>(base: T, over: Partial<T> | undefined): T {
+export function deepMerge<T>(base: T, over: Partial<T> | undefined): T {
   if (over === undefined) return base;
   if (!isPlainObject(base) || !isPlainObject(over)) return (over as T) ?? base;
   const out: Record<string, unknown> = { ...base };

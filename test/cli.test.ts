@@ -7,9 +7,9 @@ import { spawn, spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createProgram } from '../src/cli-program';
-import { loadConfig } from '../src/config/load';
+import { loadConfig, type ResolvedConfig } from '../src/config/load';
 import type { Config } from '../src/config/schema';
-import { EXIT } from '../src/core/types';
+import { EXIT, type RunResult } from '../src/core/types';
 import { finalizeRun } from '../src/explorer/run-result';
 import { startServer, type TestServer } from './helpers/server';
 
@@ -213,6 +213,53 @@ describe('doctor baseline check', () => {
     const differs = await runAsync(['doctor', server.url, '--baseline', baseline], directory);
     expect(differs.stdout).toContain('pass doctor the same flags you pass to run');
   }, 60_000);
+});
+
+describe('replay', () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await startServer();
+  });
+
+  afterAll(async () => {
+    await server?.close();
+  });
+
+  it('rebuilds a dry run from results.json, with flags beating the recorded config', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-replay-'));
+    temporaryDirectories.push(directory);
+    const results = await writeResults(directory, {
+      target: server.url,
+      seed: 'replay-seed',
+      headers: { 'X-Recorded': 'secret' },
+      auth: { storageState: join(directory, 'missing-state.json') },
+      budget: { maxActions: 40, maxDurationMs: 30_000 },
+      explore: { forms: { enabled: false } },
+      guardrails: { dryRun: true },
+      report: { outDir: join(directory, 'recorded-out') },
+    });
+    const out = join(directory, 'replayed');
+
+    const replay = await runAsync(
+      ['replay', results, '--max-actions', '3', '--out', out],
+      directory,
+    );
+    expect(replay.stderr).not.toContain('unknown option');
+    expect([EXIT.CLEAN, EXIT.FINDINGS]).toContain(replay.status);
+    expect(replay.stdout).toContain(`buttonmash run ${server.url} --seed replay-seed --dry-run`);
+
+    const replayed = JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')) as RunResult;
+    expect(replayed.run.dryRun).toBe(true);
+    expect(replayed.config.seed).toBe('replay-seed');
+    expect(replayed.config.maxActions).toBe(3);
+    expect(replayed.config.maxDurationMs).toBe(30_000);
+    const resolved = replayed.resolvedConfig as unknown as ResolvedConfig;
+    expect(resolved.explore.forms.enabled).toBe(false);
+    expect(resolved.headers).toEqual({});
+    expect(resolved.auth.storageState).toBeUndefined();
+    expect(existsSync(join(directory, 'recorded-out'))).toBe(false);
+  }, 90_000);
 });
 
 describe('CLI interruption', () => {
