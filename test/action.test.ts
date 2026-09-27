@@ -30,6 +30,12 @@ function stepScript(id: string): string {
   return body.join('\n');
 }
 
+/** The quoted `default:` of an input, or undefined when it has none. */
+function inputDefault(name: string): string | undefined {
+  const block = new RegExp(`^ {2}${name}:\\n((?: {4}.*\\n)+)`, 'm').exec(actionYml)?.[1];
+  return block === undefined ? undefined : /^ {4}default: '(.*)'$/m.exec(block)?.[1];
+}
+
 let sandbox: string;
 
 beforeEach(() => {
@@ -90,7 +96,7 @@ function runButtonmash(inputs: { args?: string; failOn?: string; stubExit?: numb
       BM_DIR: bmDir,
       BM_TARGET: TARGET,
       BM_BROWSER: 'chromium',
-      BM_FAIL_ON: inputs.failOn ?? 'high',
+      BM_FAIL_ON: inputs.failOn ?? inputDefault('fail-on') ?? '',
       BM_ARGS: inputs.args ?? '',
       GITHUB_WORKSPACE: workspace,
     },
@@ -101,17 +107,21 @@ function runButtonmash(inputs: { args?: string; failOn?: string; stubExit?: numb
 }
 
 function baseArgv(workspace: string): string[] {
-  return [
-    'run',
-    TARGET,
-    '--browser',
-    'chromium',
-    '--fail-on',
-    'high',
-    '--out',
-    `${workspace}/buttonmash-report`,
-  ];
+  return ['run', TARGET, '--browser', 'chromium', '--out', `${workspace}/buttonmash-report`];
 }
+
+describe('action run step: fail-on', () => {
+  it('defaults to empty so failOn in the config file is not overridden', () => {
+    expect(inputDefault('fail-on')).toBe('');
+    const step = runButtonmash({});
+    expect(step.argv).toEqual(baseArgv(step.workspace));
+  });
+
+  it('passes --fail-on when the input is set', () => {
+    const step = runButtonmash({ failOn: 'medium' });
+    expect(step.argv).toEqual([...baseArgv(step.workspace), '--fail-on', 'medium']);
+  });
+});
 
 describe('action run step: args parsing', () => {
   it('passes nothing extra for empty or blank args', () => {
