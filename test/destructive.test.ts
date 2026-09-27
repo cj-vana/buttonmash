@@ -67,6 +67,14 @@ describe('verb matching precision', () => {
     expect(classifyControl(el({ name: 'Removes item' })).block).toBe(true);
     expect(classifyControl(el({ name: 'Archived' })).block).toBe(true);
     expect(classifyControl(el({ name: 'Deletes everything' })).block).toBe(true);
+    expect(classifyControl(el({ name: 'Transfers' })).block).toBe(true);
+  });
+
+  it('does not block the agent noun built on a verb', () => {
+    expect(classifyControl(el({ name: 'Eraser' })).block).toBe(false); // drawing tool
+    expect(classifyControl(el({ name: 'Subscribers' })).block).toBe(false); // list page
+    expect(classifyControl(el({ name: 'Purchaser details' })).block).toBe(false);
+    expect(classifyControl(el({ name: 'Destroyers' })).block).toBe(false);
   });
 
   it('accepts non-Latin extraVerbs', () => {

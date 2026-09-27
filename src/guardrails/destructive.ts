@@ -124,16 +124,24 @@ export interface Classification {
 
 const CJK_RE = /[぀-ヿ㐀-鿿가-힯]/;
 
+/** Endings that turn a verb into the noun for whoever does it: `Eraser` is a
+ *  drawing tool and `Subscribers` a list page, not an erase or a subscribe. */
+const AGENT_NOUN_SUFFIX = /^(?:e?r|or)s?$/;
+
 /** Whole-word verb matching: `Banner` must not trip `ban`, `Buyer` `buy`,
  *  `PayPal login` `pay` — substring matching silently downgraded benign
  *  controls to hover and eroded coverage. Verbs ≥4 chars also match as a
- *  token prefix so common inflections (`removes`, `archived`) stay covered;
- *  CJK verbs match as substrings since those scripts don't space-delimit. */
+ *  token prefix so common inflections (`removes`, `archived`) stay covered,
+ *  except for agent nouns; CJK verbs match as substrings since those scripts
+ *  don't space-delimit. */
 export function verbMatches(name: string, verb: string): boolean {
   if (!verb) return false;
   if (CJK_RE.test(verb)) return name.includes(verb);
   if (verb.includes(' ')) return ` ${name} `.includes(` ${verb} `);
-  return name.split(' ').some((t) => (verb.length >= 4 ? t.startsWith(verb) : t === verb));
+  return name.split(' ').some((t) => {
+    if (t === verb) return true;
+    return verb.length >= 4 && t.startsWith(verb) && !AGENT_NOUN_SUFFIX.test(t.slice(verb.length));
+  });
 }
 
 /**
