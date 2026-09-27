@@ -129,13 +129,3 @@ export function scanForSecrets(text: string): SecretHit[] {
   }
   return hits;
 }
-
-/** Header names whose values must never be persisted. */
-export const SENSITIVE_HEADERS = new Set([
-  'authorization',
-  'cookie',
-  'set-cookie',
-  'x-api-key',
-  'x-auth-token',
-  'proxy-authorization',
-]);
