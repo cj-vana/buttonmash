@@ -31,7 +31,12 @@ import {
   type CustomConsoleRule,
 } from '../detectors/signals';
 import { DANGEROUS_PATH_RE } from '../guardrails/destructive';
-import { attachPageFence, installContextFence, isAllowedOrigin } from '../guardrails/fence';
+import {
+  attachPageFence,
+  FenceLog,
+  installContextFence,
+  isAllowedOrigin,
+} from '../guardrails/fence';
 import { launchBrowser, createDeterministicContext } from '../session/browser';
 import { performScriptedLogin, validateStorageState } from '../session/auth';
 import { executeAction, gatePlan, planAction, type ActionContext } from './actions';
@@ -138,6 +143,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     blockMedia: cfg.guardrails.blockMedia,
     billingMode: cfg.guardrails.billing.mode,
     isBillingLatched: () => billingLive,
+    aborted: new FenceLog(),
   };
   // Page-bound wiring, re-attachable to a recreated page after a crash.
   // Playwright does NOT close a crashed page — it stays open and every
@@ -152,6 +158,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       ignore,
       customConsole,
       onBillingLive: markBillingLive,
+      fenced: fenceOpts.aborted,
     });
     attachPageFence(p, fenceOpts, recorder);
     p.on('crash', () => {

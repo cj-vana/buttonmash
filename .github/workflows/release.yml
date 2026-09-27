@@ -44,13 +44,13 @@ jobs:
           CI: 'true'
 
       - name: Smoke Firefox
-        run: npx vitest run test/browser-smoke.test.ts
+        run: npx vitest run test/browser-smoke.test.ts test/fence-noise.test.ts
         env:
           BUTTONMASH_SMOKE_BROWSER: firefox
           CI: 'true'
 
       - name: Smoke WebKit
-        run: npx vitest run test/browser-smoke.test.ts
+        run: npx vitest run test/browser-smoke.test.ts test/fence-noise.test.ts
         env:
           BUTTONMASH_SMOKE_BROWSER: webkit
           CI: 'true'

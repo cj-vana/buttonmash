@@ -73,14 +73,15 @@ export async function startServer(): Promise<TestServer> {
       );
       return;
     }
-    // A clean page whose web font (blockMedia) and logout ping (dangerous path)
-    // are both aborted by the fence (for fence-noise tests).
+    // A clean page whose web font (blockMedia), logout ping (dangerous path) and
+    // off-origin embed are all aborted by the fence (for fence-noise tests).
     if (url === '/fonts') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(
         '<!doctype html><meta charset="utf-8"><title>Fonts</title>' +
           '<style>@font-face{font-family:Brand;src:url(/static/brand.woff2)}body{font-family:Brand}</style>' +
           '<h1>Set in a web font</h1><button id="noop" type="button">Do nothing</button>' +
+          '<iframe src="https://example.org/embed" title="embed"></iframe>' +
           "<script>fetch('/api/logout').catch(function () {});</script>",
       );
       return;

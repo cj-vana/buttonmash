@@ -17,6 +17,32 @@ function safePostData(req: Request): string | null {
   }
 }
 
+/**
+ * URLs the fence has aborted. Every engine reports those cancellations, each in
+ * its own words (Chromium `net::ERR_BLOCKED_BY_CLIENT`, Firefox
+ * `NS_ERROR_FAILURE`, WebKit "Blocked by Web Inspector"), so the signal
+ * listeners match on the URL instead of the text. Oldest entries are evicted
+ * past `capacity` so a long run can't grow it without bound.
+ */
+export class FenceLog {
+  private urls = new Set<string>();
+
+  constructor(private readonly capacity = 2000) {}
+
+  record(url: string): void {
+    this.urls.delete(url);
+    this.urls.add(url);
+    if (this.urls.size > this.capacity) {
+      const oldest = this.urls.values().next().value;
+      if (oldest !== undefined) this.urls.delete(oldest);
+    }
+  }
+
+  has(url: string): boolean {
+    return this.urls.has(url);
+  }
+}
+
 export interface FenceOptions {
   allowedOrigins: readonly string[];
   /** Combined dangerous-path regex (or null). */
@@ -28,6 +54,8 @@ export interface FenceOptions {
   billingMode: 'refuse' | 'warn' | 'off';
   /** True once live billing has been detected anywhere in the run. */
   isBillingLatched: () => boolean;
+  /** Where aborted URLs are recorded, for listeners that must not report them. */
+  aborted?: FenceLog;
 }
 
 /** Static resource types that must never be path-blocked (they carry no
@@ -99,6 +127,10 @@ export async function installContextFence(
   // Route-level fence — the network layer is the real safety boundary.
   await context.route('**/*', (route) => {
     const req = route.request();
+    const block = (): Promise<void> => {
+      opts.aborted?.record(req.url());
+      return route.abort('blockedbyclient');
+    };
     const type = req.resourceType();
     let origin = '';
     let host = '';
@@ -117,12 +149,12 @@ export async function installContextFence(
     //    serving modules from paths like /src/features/billing/* (resource type
     //    'script') would be blocked and the SPA would never mount.
     if (!ASSET_TYPES.has(type) && opts.blockedPathRe?.test(pathname)) {
-      return route.abort('blockedbyclient');
+      return block();
     }
 
     // 2. Off-origin document navigations.
     const offOrigin = origin !== '' && !allowed.has(origin);
-    if (type === 'document' && offOrigin) return route.abort('blockedbyclient');
+    if (type === 'document' && offOrigin) return block();
 
     // 3. Payment safety: block real charges/tokenization at the network layer
     //    while still allowing test-mode/sandbox flows to be fuzzed.
@@ -134,13 +166,13 @@ export async function installContextFence(
         recorder.add('billing-live', `blocked live payment request → ${host}`, {
           severity: opts.billingMode === 'refuse' ? 'critical' : 'medium',
         });
-        return route.abort('blockedbyclient');
+        return block();
       }
     }
 
     // 4. Media/font noise (images kept so broken-image detection works).
     if (opts.blockMedia && (type === 'media' || type === 'font')) {
-      return route.abort('blockedbyclient');
+      return block();
     }
     return route.continue();
   });
