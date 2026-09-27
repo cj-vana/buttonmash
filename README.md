@@ -334,6 +334,7 @@ export default defineConfig({
     // excludePaths: ['/admin'],     // never crawl these
     billing: { mode: 'refuse' },   // refuse | warn | off
     // dryRun: true,                // read-only: explore without submitting
+    // vetRedirects: true,          // check a page's first redirect before following it
     destructive: {
       enabled: true,
       extraVerbs: ['archivar'],
@@ -385,10 +386,10 @@ slash or capital letters can't make one match nothing.
 - **Uncaught JS errors** and `console.error`
 - **HTTP 4xx/5xx** responses and failed requests
 - **Renderer crashes** and **hangs / unresponsive pages** (a wall-clock watchdog, plus a responsiveness probe whenever an action times out)
-- **Framework error overlays** (Next.js/Vite/React, "Application error"), caught even when an error boundary swallows the throw
-- **Blank screens** ("white screen of death") and **broken images**
-- **Reflected input**, a safe canary probe that flags possible XSS sinks (never injects executing payloads)
-- **Client-exposed secrets** (Stripe/AWS/GitHub/Slack/… keys, gitleaks-derived)
+- **Framework error overlays** (Next.js/Vite/React, "Application error"), caught even when an error boundary swallows the throw; Next.js's always-present dev portal is not mistaken for an error
+- **Blank screens** ("white screen of death"), judged by what is actually rendered and visible, and **broken images**
+- **Reflected input**, a safe canary probe that flags typed text echoed back into the page, a place to look for XSS (it never injects executing payloads, and it reports an echo, not a proven sink)
+- **Client-exposed secrets** (Stripe/AWS/GitHub/GitLab/Slack/… keys and private keys, gitleaks-derived); the key id an AWS presigned URL carries by design is redacted but not reported
 - **Accessibility** violations via axe-core (opt-in)
 - **Session loss**, flagged when an authed run gets redirected to a login page mid-run (expired session); with a login script configured it re-authenticates and continues, and a login script that never gets in ends the run as a failure
 - Your own **custom signals** (console/DOM/url regex rules)
@@ -411,8 +412,16 @@ lose the findings collected so far.
 
 buttonmash is built to break things without breaking *you*:
 
-- **Stay on origin.** Off-origin navigations and `target=_blank` popups are
-  blocked; the session is fenced to your allowed origins.
+- **Stay on origin.** Off-origin page loads, iframes and `target=_blank`
+  popups are blocked, and a script-driven escape is stepped back. Requests the
+  app makes in the background (fetch, XHR, WebSockets) may still go to other
+  hosts, since apps need their APIs and CDNs; there, only dangerous paths
+  (WebSockets included) and live payment traffic are blocked. The browser
+  follows redirects on its own, so a page that redirects somewhere unsafe is
+  caught only after it loads, unless you set `guardrails.vetRedirects: true`:
+  then the fence checks each page's first redirect before it is followed
+  (Chromium and Firefox), at the cost of fetching every page itself, which
+  buffers it and drops its `Sec-Fetch-*` headers.
 - **Skip destructive controls.** Buttons/links matching a multilingual verb
   list (delete, pay, logout, cancel subscription, …), or pointing at dangerous
   paths (`/logout`, `/account/delete`, `/billing/cancel`), are detected and
@@ -425,7 +434,7 @@ buttonmash is built to break things without breaking *you*:
   checkbox, so the click can't land on a dialog's "Delete all".
 - **Refuse live billing.** If live Stripe/Braintree keys or live processor hosts
   are detected, buttonmash aborts (`billing.mode: 'refuse'`) and tells you to switch
-  to test mode. Publishable test keys are fine.
+  to test mode. Publishable test keys and PayPal's sandbox SDK are fine.
 - **Redact secrets.** Anything matching a secret pattern is scrubbed before it's
   written to `results.json`, JUnit, SARIF or the HTML report, and auth/cookie
   headers never appear in them. A Playwright trace can't be scrubbed, so
