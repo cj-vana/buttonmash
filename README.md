@@ -140,14 +140,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.3.0
+      - uses: cj-vana/buttonmash@v0.3.1
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
 ```
 
-The action runs the buttonmash release that matches its own tag (`@v0.3.0`
-installs 0.3.0) and reads a committed `buttonmash.config.*` from the
+The action runs the buttonmash release that matches its own tag (`@v0.3.1`
+installs 0.3.1) and reads a committed `buttonmash.config.*` from the
 workspace. Its inputs:
 
 | Input | Default | What it does |
@@ -257,6 +257,9 @@ path guards apply to the hash route too, anchored patterns included: a
 Discovery also reaches **inside open shadow DOM** (web-component design systems like
 Salesforce LWC, Ionic, Shoelace/Lit/Material Web) and **same-origin iframes**
 (embedded editors, wizards), so component-based apps aren't invisible to it.
+It also skips what a user couldn't reach: the contents of a closed `<details>`,
+inert subtrees, and, while a modal dialog is open, everything outside the top
+modal.
 
 It's built to survive messy real apps on long CI sweeps: it **recovers from
 renderer crashes** (recreates the page and continues, skipping the page that
