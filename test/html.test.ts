@@ -1,6 +1,26 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 import { buildHtml } from '../src/report/html';
-import type { RunResult } from '../src/core/types';
+import type { Finding, RunResult } from '../src/core/types';
+
+function screenshotFinding(dedupKey: string, path: string): Finding {
+  return {
+    id: dedupKey,
+    dedupKey,
+    severity: 'high',
+    category: 'js-error',
+    title: `Error ${dedupKey}`,
+    description: 'boom',
+    count: 1,
+    location: { url: 'http://localhost:3000' },
+    reproSteps: [],
+    firstSeenStep: 4,
+    artifacts: [{ type: 'screenshot', path, mime: 'image/png' }],
+  };
+}
 
 function result(over: Partial<RunResult['run']> & { seed?: string }): RunResult {
   return {
@@ -80,5 +100,29 @@ describe('html report', () => {
     expect(html).toContain('Resolved since baseline');
     expect(html).toContain('"newFindings":1');
     expect(html).toContain('Fixed crash');
+  });
+
+  it('inlines a screenshot shared by several findings once', () => {
+    const outDir = mkdtempSync(join(tmpdir(), 'buttonmash-html-'));
+    try {
+      mkdirSync(join(outDir, 'artifacts'));
+      const shared = Buffer.from(Array.from({ length: 96 }, (_, i) => (i * 37 + 11) % 256));
+      const other = Buffer.from(Array.from({ length: 96 }, (_, i) => (i * 53 + 7) % 256));
+      writeFileSync(join(outDir, 'artifacts', 'step-4.png'), shared);
+      writeFileSync(join(outDir, 'artifacts', 'step-9.png'), other);
+      const report = result({});
+      report.findings = [
+        screenshotFinding('a', 'artifacts/step-4.png'),
+        screenshotFinding('b', 'artifacts/step-4.png'),
+        screenshotFinding('c', 'artifacts/step-9.png'),
+      ];
+
+      const html = buildHtml(report, outDir);
+      const copies = (base64: string) => html.split(base64).length - 1;
+      expect(copies(shared.toString('base64'))).toBe(1);
+      expect(copies(other.toString('base64'))).toBe(1);
+    } finally {
+      rmSync(outDir, { recursive: true, force: true });
+    }
   });
 });

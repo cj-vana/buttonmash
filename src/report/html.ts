@@ -1,7 +1,8 @@
 /**
  * Self-contained single-file HTML report. CSS + JS are inlined and the full
  * result is embedded as a JSON blob rendered client-side. Small screenshots are
- * inlined as base64 thumbnails; the originals stay as referenced artifact files.
+ * inlined as base64, once per file even when several findings share one; the
+ * originals stay as referenced artifact files.
  */
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -44,7 +45,8 @@ const el = (t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=
 const esc = s => String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 const app = document.getElementById('app');
 const r = data;
-const sevs = ['critical','high','medium','low','info'];
+const shots = r.screenshots || {};
+const sevs =['critical','high','medium','low','info'];
 const sum = el('div','summary');
 sum.appendChild(el('div','chip','<b>'+r.stats.actionsTaken+'</b><span class="muted">actions</span>'));
 sum.appendChild(el('div','chip','<b>'+r.stats.pagesVisited+'</b><span class="muted">pages</span>'));
@@ -74,7 +76,8 @@ for(const f of r.findings){
   }
   for(const a of (f.artifacts||[])){
     if(a.type==='screenshot'||a.type==='thumbnail'){
-      if(a.dataUri){const i=el('img','shot');i.src=a.dataUri;b.appendChild(i);}
+      const uri=shots[a.path];
+      if(uri){const i=el('img','shot');i.src=uri;b.appendChild(i);}
       b.appendChild(el('div','kv','<a href="'+esc(a.path)+'">open screenshot</a>'));
     } else if(a.type==='trace'){ b.appendChild(el('div','kv','<a href="'+esc(a.path)+'">trace.zip</a> — open with: npx playwright show-trace '+esc(a.path))); }
   }
@@ -113,15 +116,17 @@ function h(s: string): string {
 }
 
 export function buildHtml(result: RunResult, outDir: string): string {
-  const enriched: RunResult = structuredClone(result);
-  for (const f of enriched.findings) {
+  // Findings first seen at the same step share one PNG, so each file is inlined
+  // once and the client looks it up by path.
+  const screenshots = new Map<string, string>();
+  for (const f of result.findings) {
     for (const a of f.artifacts) {
-      if (a.type === 'screenshot') {
-        const uri = inlineThumb(outDir, a.path, a.mime);
-        if (uri) a.dataUri = uri;
-      }
+      if (a.type !== 'screenshot' || screenshots.has(a.path)) continue;
+      const uri = inlineThumb(outDir, a.path, a.mime);
+      if (uri) screenshots.set(a.path, uri);
     }
   }
+  const enriched = { ...result, screenshots: Object.fromEntries(screenshots) };
   const json = JSON.stringify(enriched).replace(/</g, '\\u003c');
   const f = result.stats.findingsBySeverity;
   const verdict = result.run.exitCode === 0 ? 'PASSED' : 'FAILED';
