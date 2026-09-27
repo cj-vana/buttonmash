@@ -4,7 +4,7 @@
  * dismisses (never accepts) native dialogs, and recovers if a JS-driven
  * navigation slips off-origin.
  */
-import type { BrowserContext, Page, Request } from 'playwright';
+import type { APIResponse, BrowserContext, Page, Request, Route } from 'playwright';
 
 import type { SignalRecorder } from '../detectors/recorder';
 import { inspectRequestForLiveMode, isPaymentHost } from './billing';
@@ -61,6 +61,11 @@ export interface FenceOptions {
 /** Static resource types that must never be path-blocked (they carry no
  *  destructive side effect and blocking them breaks app/module loading). */
 const ASSET_TYPES = new Set(['script', 'stylesheet', 'image', 'font', 'media']);
+
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** Why the fence refuses a request. */
+type Refusal = 'path' | 'origin' | 'live-payment' | 'latched-payment';
 
 function safeOrigin(url: string): string {
   try {
@@ -142,6 +147,66 @@ export async function installContextFence(
     }
   });
 
+  const billingSeverity = opts.billingMode === 'refuse' ? 'critical' : 'medium';
+
+  /** Checks 1-3, shared by a request and by a redirect it answers with. */
+  const refusal = (u: URL, type: string, postData: () => string | null): Refusal | null => {
+    // 1. Dangerous paths (logout/delete/cancel) — block navigations, API calls,
+    //    and beacons, but NOT static asset/module loads. Otherwise a bundler
+    //    serving modules from paths like /src/features/billing/* (resource type
+    //    'script') would be blocked and the SPA would never mount.
+    if (!ASSET_TYPES.has(type) && isDangerousRoute(u, opts.blockedPathRe)) return 'path';
+
+    // 2. Off-origin document navigations.
+    if (type === 'document' && !allowed.has(u.origin)) return 'origin';
+
+    // 3. Payment safety: block real charges/tokenization at the network layer
+    //    while still allowing test-mode/sandbox flows to be fuzzed.
+    if (opts.billingMode !== 'off' && isPaymentHost(u.hostname)) {
+      if (inspectRequestForLiveMode(u.href, postData()).length > 0) return 'live-payment';
+      if (opts.isBillingLatched()) return 'latched-payment';
+    }
+    return null;
+  };
+
+  /**
+   * Playwright calls the route handler once per request and follows a 3xx
+   * itself, so a page that redirected to /logout, or to another origin, went
+   * out unchecked. A document is fetched here without following redirects,
+   * and a redirect reaches the browser only if its target passes checks 1-3.
+   * The browser follows it natively, so the hop after that one is not seen.
+   */
+  const fetchDocument = async (route: Route, from: URL): Promise<void> => {
+    let response: APIResponse;
+    try {
+      response = await route.fetch({ maxRedirects: 0, timeout: 0 });
+    } catch {
+      // Unreachable from here (refused connection, page gone): let the
+      // browser send it, as it did before this check existed.
+      return route.continue().catch(() => {});
+    }
+    const location = REDIRECT_STATUSES.has(response.status())
+      ? response.headers()['location']
+      : undefined;
+    const target = location ? parseUrl(location, from) : null;
+    const refused = target && refusal(target, 'document', () => null);
+    if (target && refused) {
+      // No request is ever made for this hop, so nothing else records it.
+      if (refused !== 'path' && refused !== 'origin') {
+        recorder.add('billing-live', `blocked a redirect to a payment page on ${target.hostname}`, {
+          severity: billingSeverity,
+        });
+      }
+      opts.aborted?.record(route.request().url());
+      return route.abort('blockedbyclient').catch(() => {});
+    }
+    return route.fulfill({ response }).catch(() => {});
+  };
+
+  // WebKit refuses to fulfill a request with a 3xx, so it follows redirects
+  // unchecked, as every engine did before.
+  const vetsRedirects = context.browser()?.browserType().name() !== 'webkit';
+
   // Route-level fence — the network layer is the real safety boundary.
   await context.route('**/*', (route) => {
     const req = route.request();
@@ -156,42 +221,35 @@ export async function installContextFence(
     } catch {
       return route.continue();
     }
-    const host = u.hostname;
 
-    // 1. Dangerous paths (logout/delete/cancel) — block navigations, API calls,
-    //    and beacons, but NOT static asset/module loads. Otherwise a bundler
-    //    serving modules from paths like /src/features/billing/* (resource type
-    //    'script') would be blocked and the SPA would never mount.
-    if (!ASSET_TYPES.has(type) && isDangerousRoute(u, opts.blockedPathRe)) {
-      return block();
+    const refused = refusal(u, type, () => safePostData(req));
+    // Live evidence carried by the request itself is recorded, and the run
+    // latched, by the signal listeners' `request` handler. Only a block that
+    // rests on the latch alone is recorded here, so one event is one signal.
+    if (refused === 'latched-payment') {
+      recorder.add(
+        'billing-live',
+        `blocked a payment request to ${u.hostname} after live billing was detected`,
+        { severity: billingSeverity },
+      );
     }
-
-    // 2. Off-origin document navigations.
-    if (type === 'document' && !allowed.has(u.origin)) return block();
-
-    // 3. Payment safety: block real charges/tokenization at the network layer
-    //    while still allowing test-mode/sandbox flows to be fuzzed.
-    if (opts.billingMode !== 'off' && isPaymentHost(host)) {
-      // Live evidence carried by the request itself is recorded, and the run
-      // latched, by the signal listeners' `request` handler. Only a block that
-      // rests on the latch alone is recorded here, so one event is one signal.
-      if (inspectRequestForLiveMode(req.url(), safePostData(req)).length > 0) return block();
-      if (opts.isBillingLatched()) {
-        recorder.add(
-          'billing-live',
-          `blocked a payment request to ${host} after live billing was detected`,
-          { severity: opts.billingMode === 'refuse' ? 'critical' : 'medium' },
-        );
-        return block();
-      }
-    }
+    if (refused) return block();
 
     // 4. Media/font noise (images kept so broken-image detection works).
     if (opts.blockMedia && (type === 'media' || type === 'font')) {
       return block();
     }
+    if (type === 'document' && vetsRedirects) return fetchDocument(route, u);
     return route.continue();
   });
+}
+
+function parseUrl(url: string, base: URL): URL | null {
+  try {
+    return new URL(url, base);
+  } catch {
+    return null;
+  }
 }
 
 /** Init script (added before navigation) that keeps clicks in-page. */
