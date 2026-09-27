@@ -38,6 +38,21 @@ describe('secret rule bounds', () => {
     expect(scanForSecrets(long).map((h) => h.ruleId)).toContain('stripe-secret-key');
   });
 
+  it('redacts and reports GitLab tokens in both the classic and routable forms', () => {
+    // Built from gitleaks' gitlab-pat (glpat- + 20 of [\w-]) and
+    // gitlab-pat-routable (glpat- + 27..300 of [0-9a-zA-Z_-] + . + 2 + 7 of [0-9a-z]).
+    const classic = 'glpat-' + 'a1B2c'.repeat(4);
+    const routable = 'glpat-' + 'a1B2c3D4e5'.repeat(3) + '.' + '0a' + 'b1c2d3e';
+    for (const [token, id] of [
+      [classic, 'gitlab-pat'],
+      [routable, 'gitlab-pat-routable'],
+    ]) {
+      const text = `token="${token}"`;
+      expect(redact(text).redacted).toBe(`token="[REDACTED:${id}]"`);
+      expect(scanForSecrets(text).map((h) => h.ruleId)).toEqual([id]);
+    }
+  });
+
   it('redacts a whole PEM private key, body and END line included', () => {
     const line = 'MIIEowIBAAKCAQEAu1SU1LfVLPHCozMxH2Mo4lgOEePzNm0tRgeLezV6ffAt0gun';
     const pem = [
