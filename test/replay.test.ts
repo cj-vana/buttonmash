@@ -126,6 +126,11 @@ describe('replayOverrides', () => {
     expect(cfg.auth.loginUrlPattern).toBe('^/account/enter');
   });
 
+  it('does not replay a silenced log level, which replay has no flag to undo', async () => {
+    const overrides = replayOverrides(await recorded({ ...staging, logLevel: 'silent' }));
+    expect(overrides).not.toHaveProperty('logLevel');
+  });
+
   it('returns nothing to replay from a results.json without resolvedConfig', async () => {
     const { resolvedConfig: _omitted, ...older } = await recorded(staging);
     expect(replayOverrides(older as RunResult)).toEqual({});
