@@ -118,6 +118,22 @@ describe('loadConfig', () => {
     }
   });
 
+  it('refuses a ${ENV} reference to an empty variable, the way Actions passes a missing secret', async () => {
+    process.env.BM_TEST_EMPTY = '';
+    try {
+      const load = loadConfig({
+        ignoreConfigFile: true,
+        overrides: {
+          target: 'https://x.test',
+          auth: { basicAuth: { username: 'ci', password: '${BM_TEST_EMPTY}' } },
+        },
+      });
+      await expect(load).rejects.toThrow(/BM_TEST_EMPTY.*empty/);
+    } finally {
+      delete process.env.BM_TEST_EMPTY;
+    }
+  });
+
   it('resolves path-scope globs and defaults crawl on', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,
