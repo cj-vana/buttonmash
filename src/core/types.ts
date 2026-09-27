@@ -210,8 +210,6 @@ export interface Artifact {
   /** Path relative to the report root. */
   path: string;
   mime: string;
-  /** Inlined data URI for small thumbnails embedded in the HTML report. */
-  dataUri?: string;
 }
 
 /** A deduplicated, reportable problem. */
