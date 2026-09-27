@@ -146,13 +146,32 @@ function matchesPattern(value: string, pattern?: string): boolean {
   }
 }
 
+/** Seeded values in the shapes simple `pattern` attributes ask for. */
+function patternCandidates(r: Rng): string[] {
+  const digits = (n: number) => Array.from({ length: n }, () => String(r.int(10))).join('');
+  const letters = (n: number) =>
+    Array.from({ length: n }, () => String.fromCharCode(65 + r.int(26))).join('');
+  const upper3 = letters(3);
+  return [
+    digits(5),
+    upper3,
+    upper3.toLowerCase(),
+    `${letters(2)}${digits(2)}`,
+    `${letters(1)}${letters(5).toLowerCase()}${digits(2)}`,
+    digits(3),
+  ];
+}
+
 /**
  * Produce a valid value for `field`. `attempt` (>0) escalates strategy when a
  * previous submit was rejected.
  */
 export function valueForField(runId: string, field: FieldDescriptor, attempt = 0): FieldValue {
   const r = fieldRng(runId, field, attempt);
-  const salt = fnv1a(`${runId}:${field.formKey}:${field.name || field.selector}`);
+  // Retries salt by attempt so a rejected value is not sent again; the first
+  // attempt keeps the unsalted value so existing seeds replay unchanged.
+  const retry = attempt > 0 ? `:${attempt}` : '';
+  const salt = fnv1a(`${runId}:${field.formKey}:${field.name || field.selector}${retry}`);
 
   switch (field.kind) {
     case 'checkbox':
@@ -184,7 +203,7 @@ export function valueForField(runId: string, field: FieldDescriptor, attempt = 0
     case 'password': {
       // Policy-satisfying and identical across ALL password fields in the form
       // (so a confirm/verify field matches) — keyed by the form, not the name.
-      const pwSalt = fnv1a(`${runId}:${field.formKey}:pw`);
+      const pwSalt = fnv1a(`${runId}:${field.formKey}:pw${retry}`);
       const base = `Aa1!${pwSalt.slice(0, 8)}`;
       const min = Math.max(8, field.minLength ?? 0);
       let v = base;
@@ -197,15 +216,13 @@ export function valueForField(runId: string, field: FieldDescriptor, attempt = 0
       // text / textarea / contenteditable
       const sem = semanticText(field, r, salt);
       let value = clamp(sem.value, field, r);
-      // Honor an explicit pattern if the semantic value violates it.
+      // Honor an explicit pattern if the semantic value violates it: try a few
+      // common shapes (digits, letters, letters then digits) before giving up.
       if (!matchesPattern(value, field.pattern)) {
-        value = clamp(
-          /\\d|\[0-9\]/.test(field.pattern ?? '')
-            ? String(r.intBetween(10000, 99999))
-            : `seed${salt.slice(0, 6)}`,
-          field,
-          r,
-        );
+        const candidates = patternCandidates(r).map((c) => clamp(c, field, r));
+        value =
+          candidates.find((c) => matchesPattern(c, field.pattern)) ??
+          clamp(`seed${salt.slice(0, 6)}`, field, r);
       }
       return { value, canary: sem.canary };
     }
