@@ -9,6 +9,7 @@ import type { Page } from 'playwright';
 import type { ResolvedConfig } from '../config/load';
 import { withDeadline } from '../core/async';
 import { normalizeUrl } from '../core/hash';
+import { compileRegexes } from '../core/regex';
 import type { Rng } from '../core/rng';
 import type { ActionKind, ElementDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
@@ -143,8 +144,9 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
     return plan;
   }
 
-  if (el && cfg.guardrails.destructive.enabled && !cfg.guardrails.destructive.allow) {
-    const c = classifyControl(el, cfg.guardrails.destructive.extraVerbs);
+  const { destructive } = cfg.guardrails;
+  if (el && destructive.enabled && !destructive.allow) {
+    const c = classifyControl(el, destructive.extraVerbs, compileRegexes(destructive.safeNames));
     if (c.block && MUTATING.has(kind)) {
       recorder.add(
         'guardrail',

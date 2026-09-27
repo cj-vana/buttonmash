@@ -9,6 +9,15 @@ export const SeveritySchema = z.enum(['critical', 'high', 'medium', 'low', 'info
 
 export const BrowserSchema = z.enum(['chromium', 'firefox', 'webkit']);
 
+function isValidRegex(pattern: string): boolean {
+  try {
+    new RegExp(pattern, 'i');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const ViewportSchema = z
   .object({
     width: z.number().int().positive().default(1280),
@@ -144,6 +153,12 @@ const DestructiveSchema = z
     enabled: z.boolean().default(true),
     /** Additional verbs (any language) to treat as destructive. */
     extraVerbs: z.array(z.string()).default([]),
+    /** Regexes (case-insensitive) for control names that only look destructive,
+     *  e.g. '^reset zoom$'. A match skips the verb check; dangerous hrefs and
+     *  form actions stay blocked. */
+    safeNames: z
+      .array(z.string().refine(isValidRegex, 'must be a valid regular expression'))
+      .default([]),
     /** DANGEROUS: allow clicking destructive controls anyway. */
     allow: z.boolean().default(false),
   })

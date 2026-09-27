@@ -5,6 +5,7 @@
  * text), the action target (href / form action+method), and a multilingual
  * verb denylist — because destructive buttons are often icon-only.
  */
+import { anyMatch } from '../core/regex';
 import type { ElementDescriptor } from '../core/types';
 
 /** Destructive verbs across a few common languages (extend via config). */
@@ -138,17 +139,19 @@ export function verbMatches(name: string, verb: string): boolean {
 /**
  * Classify a discovered control. Returns `block: true` for anything matching a
  * destructive verb, a dangerous path, or a POST/DELETE form to a dangerous
- * target.
+ * target. A name matching `safeNames` (like "Reset zoom") skips only the verb
+ * check.
  */
 export function classifyControl(
   el: ElementDescriptor,
   extraVerbs: readonly string[] = [],
+  safeNames: readonly RegExp[] = [],
 ): Classification {
   const verbs = [...DESTRUCTIVE_VERBS, ...extraVerbs].map((v) => normalizeName(v));
   const name = normalizeName(el.name);
 
   const verbHit = name ? verbs.find((v) => verbMatches(name, v)) : undefined;
-  if (verbHit) return { block: true, reason: `verb:${verbHit}` };
+  if (verbHit && !anyMatch(el.name, safeNames)) return { block: true, reason: `verb:${verbHit}` };
 
   const href = el.href ?? '';
   const formAction = el.formAction ?? '';

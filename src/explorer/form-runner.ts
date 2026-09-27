@@ -7,6 +7,7 @@
 import type { ResolvedConfig } from '../config/load';
 import { withDeadline } from '../core/async';
 import { normalizeUrl } from '../core/hash';
+import { compileRegexes } from '../core/regex';
 import type { FieldDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
 import { addCanary } from '../detectors/page-checks';
@@ -27,7 +28,8 @@ export interface FormResult {
 export function formIsUnsafe(form: FormDescriptor, cfg: ResolvedConfig): string | null {
   if (form.hasLivePaymentField) return 'payment field present';
   if (form.isAuthForm && !cfg.explore.forms.submitAuthForms) return 'auth/login form';
-  if (form.submit && classifyControl(form.submit, cfg.guardrails.destructive.extraVerbs).block) {
+  const { extraVerbs, safeNames } = cfg.guardrails.destructive;
+  if (form.submit && classifyControl(form.submit, extraVerbs, compileRegexes(safeNames)).block) {
     return 'destructive submit control';
   }
   return null;
