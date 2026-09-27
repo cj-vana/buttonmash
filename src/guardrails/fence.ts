@@ -75,6 +75,15 @@ export function isAllowedOrigin(url: string, allowed: ReadonlySet<string>): bool
   return o === '' || allowed.has(o);
 }
 
+/** True when a committed URL is on an origin outside the allowed list. An
+ *  opaque origin never counts: about:blank, data:, and the chrome-error://
+ *  page Chromium commits after every aborted navigation (the fence's own
+ *  blocks included) are not somewhere the app went. */
+function escapedTo(url: string, allowed: ReadonlySet<string>): boolean {
+  const o = safeOrigin(url);
+  return o !== '' && o !== 'null' && !allowed.has(o);
+}
+
 /** Page-level fence handlers. Re-attached whenever a page is (re)created. */
 export function attachPageFence(page: Page, opts: FenceOptions, recorder: SignalRecorder): void {
   const allowed = new Set(opts.allowedOrigins);
@@ -97,8 +106,7 @@ export function attachPageFence(page: Page, opts: FenceOptions, recorder: Signal
   // Catch JS-driven navigations that slipped through routing.
   page.on('framenavigated', async (frame) => {
     if (frame !== page.mainFrame()) return;
-    const o = safeOrigin(frame.url());
-    if (o !== '' && !allowed.has(o)) {
+    if (escapedTo(frame.url(), allowed)) {
       recorder.add('guardrail', `recovered off-origin navigation → ${frame.url()}`, {
         severity: 'low',
       });
@@ -118,7 +126,7 @@ export async function installContextFence(
   // Close any popup / new tab that escapes to a foreign origin.
   context.on('page', (p) => {
     const u = p.url();
-    if (u && u !== 'about:blank' && !allowed.has(safeOrigin(u))) {
+    if (escapedTo(u, allowed)) {
       recorder.add('guardrail', `closed popup/new-tab → ${u}`, { severity: 'info' });
       void p.close().catch(() => {});
     }
