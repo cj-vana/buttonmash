@@ -52,6 +52,25 @@ export function fuzzValue(rng: Rng, runId: string, step: number): FuzzValue {
   return { value, canary, probe: value.includes(canary) };
 }
 
+/** Boundary numbers for `<input type=number>`, which rejects any non-numeric
+ *  text before the app sees it. */
+const NUMERIC_CORPUS = [
+  '0',
+  '-1',
+  '1',
+  '0.1',
+  '-0',
+  '2147483647',
+  '2147483648',
+  '-2147483648',
+  '9999999999999999',
+  '1e308',
+] as const;
+
+export function numericFuzzValue(rng: Rng): string {
+  return rng.pick(NUMERIC_CORPUS);
+}
+
 /** A small set of "interesting" keyboard keys to press at random. */
 export const FUZZ_KEYS = [
   'Enter',

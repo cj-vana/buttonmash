@@ -77,6 +77,20 @@ describe('groupForms', () => {
     expect(forms[0]!.hasLivePaymentField).toBe(true);
   });
 
+  it('flags card fields named by expiry wording or a sectioned autocomplete token', () => {
+    for (const field of [
+      el({ formKey: 'F5', name: 'exp', label: 'Expiry' }),
+      el({ formKey: 'F5', name: 'exp', label: 'Expiration date' }),
+      el({ formKey: 'F5', name: 'num', autocomplete: 'section-pay billing cc-number' }),
+    ]) {
+      const forms = groupForms([
+        field,
+        el({ formKey: 'F5', tag: 'button', type: 'submit', isSubmit: true, name: 'Save' }),
+      ]);
+      expect(forms[0]!.hasLivePaymentField).toBe(true);
+    }
+  });
+
   it('ignores scopes with no fillable fields', () => {
     const forms = groupForms([
       el({ formKey: 'F5', tag: 'button', name: 'New' }),

@@ -4,16 +4,18 @@
  * validation failure. Safety is enforced here AND at gate time: payment/auth
  * forms and destructive submits are never submitted.
  */
+import type { Locator } from 'playwright';
+
 import type { ResolvedConfig } from '../config/load';
-import { withDeadline } from '../core/async';
 import { normalizeUrl } from '../core/hash';
 import { compileRegexes } from '../core/regex';
-import type { FieldDescriptor, FormDescriptor } from '../core/types';
+import type { ElementDescriptor, FieldDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
 import { addCanary } from '../detectors/page-checks';
 import type { ActionContext } from './actions';
 import { locate } from './discover';
 import { valueForField } from './field-values';
+import { assertUncovered } from './hit-test';
 
 export interface FormResult {
   submitted: boolean;
@@ -42,7 +44,7 @@ async function fillField(
 ): Promise<boolean> {
   const { page, cfg } = ctx;
   const t = cfg.budget.interactionTimeoutMs;
-  const loc = locate(page, field.selector, field.frameUrl);
+  const loc = locate(page, field.selector, field.frameUrl, field.frameIndex);
   const v = valueForField(ctx.runId, field, attempt);
   try {
     switch (field.kind) {
@@ -50,6 +52,7 @@ async function fillField(
         return false; // never upload
       case 'checkbox':
       case 'radio':
+        await assertUncovered(loc, field.label || field.name || field.kind, t);
         await loc.setChecked(field.kind === 'radio' ? true : !!v.checked, {
           timeout: t,
           force: true,
@@ -62,7 +65,7 @@ async function fillField(
         });
         break;
       case 'contenteditable':
-        await loc.click({ timeout: t }).catch(() => {});
+        await loc.click({ timeout: t });
         await loc.pressSequentially(v.value.slice(0, 500), { timeout: t });
         break;
       default:
@@ -75,31 +78,83 @@ async function fillField(
   }
 }
 
-/** Count fields still invalid within the form's scope (post-submit oracle). */
-async function invalidCount(ctx: ActionContext, form: FormDescriptor): Promise<number> {
-  try {
-    return await withDeadline(
-      ctx.page.evaluate(
-        (selectors: string[]) => {
-          let n = 0;
-          for (const sel of selectors) {
-            const el = document.querySelector(sel) as
-              (HTMLElement & { validity?: ValidityState }) | null;
-            if (!el) continue; // gone (likely submitted/navigated) → not invalid
-            const ariaInvalid = el.getAttribute('aria-invalid') === 'true';
-            const nativeInvalid = el.validity ? el.validity.valid === false : false;
-            if (ariaInvalid || nativeInvalid) n++;
-          }
-          return n;
+/**
+ * Count fields still invalid after a submit (the post-submit oracle), each read
+ * in its own frame and shadow root. A field that is gone counts as valid (the
+ * form was likely submitted); null means the page could not be read, so the
+ * submit is not counted as a success.
+ */
+async function invalidCount(ctx: ActionContext, form: FormDescriptor): Promise<number | null> {
+  let n = 0;
+  for (const f of form.fields) {
+    const loc = locate(ctx.page, f.selector, f.frameUrl, f.frameIndex);
+    try {
+      if ((await loc.count()) === 0) continue;
+      const invalid = await loc.evaluate(
+        (el) => {
+          const field = el as HTMLElement & { validity?: ValidityState };
+          return (
+            field.getAttribute('aria-invalid') === 'true' ||
+            (field.validity ? field.validity.valid === false : false)
+          );
         },
-        form.fields.map((f) => f.selector),
-      ),
-      5_000,
-      'form-verify',
-    );
-  } catch {
-    return 0;
+        undefined,
+        { timeout: 2_000 },
+      );
+      if (invalid) n++;
+    } catch {
+      return null;
+    }
   }
+  return n;
+}
+
+/**
+ * Mark the classified submit control before any field is filled. Its nth-child
+ * selector can point at a different control once filling inserts elements
+ * ("Unsaved changes" ahead of the buttons), so the submit is clicked by this
+ * mark, never by the selector again. Null if the control is gone or changed.
+ */
+async function pinSubmit(ctx: ActionContext, submit: ElementDescriptor): Promise<Locator | null> {
+  const mark = `${ctx.runId}-${ctx.step}`;
+  const tag = await locate(ctx.page, submit.selector, submit.frameUrl, submit.frameIndex)
+    .evaluate(
+      (el, value) => {
+        el.setAttribute('data-bm-submit', value);
+        return el.tagName.toLowerCase();
+      },
+      mark,
+      { timeout: ctx.cfg.budget.interactionTimeoutMs },
+    )
+    .catch(() => null);
+  if (tag !== submit.tag) return null;
+  return locate(ctx.page, `[data-bm-submit="${mark}"]`, submit.frameUrl, submit.frameIndex);
+}
+
+/**
+ * Submit through the pinned control: a click, or, when something covers it, the
+ * form's own requestSubmit with that control as the submitter. Never Enter in a
+ * field: that submits through the form's default button, which can be a
+ * different control (a "Delete" ahead of "Save").
+ */
+async function submitVia(submit: Locator, timeout: number): Promise<boolean> {
+  const clicked = await submit
+    .click({ timeout, noWaitAfter: true })
+    .then(() => true)
+    .catch(() => false);
+  if (clicked) return true;
+  return submit
+    .evaluate(
+      (el) => {
+        const button = el as HTMLButtonElement;
+        if (!button.form || button.type !== 'submit') return false;
+        button.form.requestSubmit(button);
+        return true;
+      },
+      undefined,
+      { timeout },
+    )
+    .catch(() => false);
 }
 
 export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): Promise<FormResult> {
@@ -127,10 +182,24 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
     return result;
   }
 
+  // Filling alone can save (change handlers, autosave), so a dry run stops here.
+  if (cfg.guardrails.dryRun) {
+    result.abandoned = true;
+    result.reason = 'dry run';
+    return result;
+  }
+
   // Fields to fill: all required + a seeded fraction of optional.
   const fields = [...form.fields]
     .filter((f) => f.kind !== 'file' || !opts.skipFileUploads)
     .sort((a, b) => (a.required === b.required ? a.fp.localeCompare(b.fp) : a.required ? -1 : 1));
+
+  const submit = form.submit && opts.submit ? await pinSubmit(ctx, form.submit) : null;
+  if (opts.submit && !submit) {
+    result.abandoned = true;
+    result.reason = 'submit control changed before filling';
+    return result;
+  }
 
   const urlBefore = page.url();
   const maxAttempts = opts.maxRetries + 1;
@@ -143,30 +212,16 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
     }
     result.fieldsFilled = filled;
 
-    if (cfg.guardrails.dryRun || !opts.submit) {
+    if (!submit) {
       result.abandoned = true;
-      result.reason = cfg.guardrails.dryRun ? 'dry-run (filled, not submitted)' : 'submit disabled';
+      result.reason = 'submit disabled';
       return result;
     }
 
-    // Submit via the safe submit control, falling back to Enter on a text field.
-    const t = cfg.budget.interactionTimeoutMs;
-    let clicked = false;
-    if (form.submit) {
-      clicked = await locate(page, form.submit.selector, form.submit.frameUrl)
-        .click({ timeout: t, noWaitAfter: true })
-        .then(() => true)
-        .catch(() => false);
-    }
-    if (!clicked) {
-      const firstText = fields.find((f) => ['text', 'email', 'search'].includes(f.kind));
-      if (firstText) {
-        await page
-          .locator(firstText.selector)
-          .first()
-          .press('Enter', { timeout: t, noWaitAfter: true })
-          .catch(() => {});
-      }
+    if (!(await submitVia(submit, cfg.budget.interactionTimeoutMs))) {
+      result.abandoned = true;
+      result.reason = 'submit control not reachable';
+      return result;
     }
 
     await page.waitForLoadState('domcontentloaded', { timeout: 3_000 }).catch(() => {});
@@ -176,6 +231,10 @@ export async function fillAndSubmit(ctx: ActionContext, form: FormDescriptor): P
       return result;
     }
     const invalid = await invalidCount(ctx, form);
+    if (invalid === null) {
+      result.reason = 'could not read the form after submitting';
+      return result;
+    }
     if (invalid === 0) {
       result.submitted = true;
       return result;

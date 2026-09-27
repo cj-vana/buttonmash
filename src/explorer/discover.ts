@@ -5,7 +5,7 @@
  * contenteditable controls, filter to actionable ones, and build a stable
  * fingerprint and a locator for each.
  */
-import type { Locator, Page } from 'playwright';
+import type { Frame, Locator, Page } from 'playwright';
 
 import { withDeadline } from '../core/async';
 import { elementFingerprint, structuralFingerprint } from '../core/hash';
@@ -91,13 +91,17 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
   };
 
   const accessibleName = (e: Element): string => {
-    const el = e as HTMLElement & { value?: string };
+    const el = e as HTMLElement & { value?: string; type?: string };
+    // A value names a button-like input ("Save"); for anything else it is
+    // user data, and naming by it would change the fingerprint on every keystroke.
+    const valueNames =
+      el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type ?? '');
     const candidates = [
       el.getAttribute('aria-label'),
       el.getAttribute('title'),
       el.getAttribute('alt'),
       el.textContent,
-      typeof el.value === 'string' ? el.value : '',
+      valueNames && typeof el.value === 'string' ? el.value : '',
       el.getAttribute('placeholder'),
       el.getAttribute('name'),
     ];
@@ -200,9 +204,10 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
       path: structuralPath(el),
       selector: selectorStr,
       href: el.getAttribute('href') || undefined,
-      formAction: el.form?.getAttribute('action') || el.getAttribute('formaction') || undefined,
+      // A submitter's formaction/formmethod override the form's own.
+      formAction: el.getAttribute('formaction') || el.form?.getAttribute('action') || undefined,
       formMethod:
-        (el.form?.getAttribute('method') || el.getAttribute('formmethod') || '').toUpperCase() ||
+        (el.getAttribute('formmethod') || el.form?.getAttribute('method') || '').toUpperCase() ||
         undefined,
       disabled: el.disabled === true,
       formKey: scopeKey(el),
@@ -312,7 +317,7 @@ function frameOrigin(u: string): string {
 const MAX_FRAMES = 8;
 
 export async function discoverElements(page: Page): Promise<ElementDescriptor[]> {
-  const collected: { raws: RawDescriptor[]; frameUrl?: string }[] = [];
+  const collected: { raws: RawDescriptor[]; frameUrl?: string; frameIndex?: number }[] = [];
 
   // Main frame.
   try {
@@ -347,19 +352,20 @@ export async function discoverElements(page: Page): Promise<ElementDescriptor[]>
         5_000,
         'discover-frame',
       );
-      collected.push({ raws, frameUrl: f.url() });
+      collected.push({ raws, frameUrl: f.url(), frameIndex: sameUrlIndex(page, f) });
     } catch {
       /* frame detached or cross-origin race */
     }
   }
 
   const out: ElementDescriptor[] = [];
-  for (const { raws, frameUrl } of collected) {
+  for (const { raws, frameUrl, frameIndex } of collected) {
     for (const r of raws) {
       if (r.disabled) continue;
       out.push({
         ...r,
         frameUrl,
+        ...(frameIndex ? { frameIndex } : {}),
         fp: elementFingerprint(r),
         structuralFp: structuralFingerprint(r),
       });
@@ -370,10 +376,19 @@ export async function discoverElements(page: Page): Promise<ElementDescriptor[]>
 
 /** Resolve a Locator for an element, in its owning frame if any. Playwright's
  *  CSS engine pierces open shadow roots, so [data-bm-id] selectors resolve there. */
-export function locate(page: Page, selector: string, frameUrl?: string): Locator {
+export function locate(page: Page, selector: string, frameUrl?: string, frameIndex = 0): Locator {
   if (frameUrl) {
-    const f = page.frames().find((fr) => fr.url() === frameUrl);
+    // Two iframes can load the same URL; the index tells them apart.
+    const f = page.frames().filter((fr) => fr.url() === frameUrl)[frameIndex];
     if (f) return f.locator(selector).first();
   }
   return page.locator(selector).first();
+}
+
+/** Position of `frame` among the page's frames that share its URL. */
+function sameUrlIndex(page: Page, frame: Frame): number {
+  return page
+    .frames()
+    .filter((fr) => fr.url() === frame.url())
+    .indexOf(frame);
 }

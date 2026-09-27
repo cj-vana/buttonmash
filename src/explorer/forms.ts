@@ -31,7 +31,11 @@ const POSITIVE_SUBMIT = [
 
 const AUTH_RE =
   /sign ?in|sign ?up|log ?in|log ?on|register|create account|forgot|reset password|password/i;
-const PAYMENT_RE = /\b(card|cc|cvc|cvv|cvc2|expir|security ?code|credit)\b/i;
+const PAYMENT_RE = /\b(card|cc|cvc|cvv|cvc2|expir\w*|security ?code|credit)\b/i;
+
+/** autocomplete is a token list ("section-pay billing cc-number"), so any cc-
+ *  token marks a card field, not only a leading one. */
+const CARD_AUTOCOMPLETE_RE = /(?:^|\s)cc-/i;
 
 function fieldKind(el: ElementDescriptor): FieldDescriptor['kind'] | null {
   if (el.editable) return 'contenteditable';
@@ -83,6 +87,7 @@ function toField(el: ElementDescriptor): FieldDescriptor | null {
     radioGroupName: el.tag === 'input' && el.type === 'radio' ? el.name : undefined,
     formKey: el.formKey || 'page',
     frameUrl: el.frameUrl,
+    frameIndex: el.frameIndex,
   };
 }
 
@@ -138,7 +143,7 @@ export function groupForms(
     const hasLivePaymentField = group.some(
       (el) =>
         PAYMENT_RE.test(`${el.name} ${el.label ?? ''}`) ||
-        (el.autocomplete ?? '').startsWith('cc-'),
+        CARD_AUTOCOMPLETE_RE.test(el.autocomplete ?? ''),
     );
     const hasPassword = fields.some((f) => f.kind === 'password');
     const isAuthForm = hasPassword || AUTH_RE.test(`${submit.name} ${haystack}`);
