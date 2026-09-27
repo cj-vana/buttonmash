@@ -36,6 +36,22 @@ describe('secrets', () => {
     }
   });
 
+  it('redacts the key id in a presigned URL but does not report it as a leak', () => {
+    // AKIA/ASIA + 16 of [A-Z2-7], the aws-access-key-id quantifiers.
+    for (const key of ['AKIA' + 'IOSFODNN7EXAMPL2', 'ASIA' + 'Y34FZKBOKMUTVV7A']) {
+      const img =
+        `<img src="https://b.s3.amazonaws.com/cat.png?X-Amz-Algorithm=AWS4-HMAC-SHA256` +
+        `&amp;X-Amz-Credential=${key}%2F20260926%2Fus-east-1%2Fs3%2Faws4_request` +
+        `&amp;X-Amz-Signature=abc123">`;
+      expect(redact(img).redacted).not.toContain(key);
+      expect(scanForSecrets(img)).toEqual([]);
+      // The same key anywhere else is still a leak.
+      expect(scanForSecrets(`${img} const aws = "${key}";`).map((h) => h.ruleId)).toEqual([
+        'aws-access-key-id',
+      ]);
+    }
+  });
+
   it('does not report a placeholder the page already contained', () => {
     expect(scanForSecrets('docs: we log [REDACTED:github-pat] instead of tokens')).toEqual([]);
   });
