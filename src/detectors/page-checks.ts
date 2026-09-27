@@ -50,30 +50,70 @@ export interface PageCheckDeps {
   timeLeftMs: number;
 }
 
-/** Runs in the browser. Cheap structural snapshot for blank/broken-image/overlay. */
+/** Runs in the browser, so it must not reference anything outside itself.
+ *  Cheap structural snapshot for blank/broken-image/overlay. */
 function domCheck(): { blank: boolean; brokenImages: string[]; overlay: string | null } {
   const body = document.body;
   const text = (body?.innerText || '').trim();
-  const interactive = document.querySelectorAll(
-    'a[href],button,input,select,textarea,[role="button"],[onclick]',
-  ).length;
-  const imgs = Array.from(document.images);
   const broken: string[] = [];
-  for (const img of imgs) {
+  for (const img of Array.from(document.images)) {
     const src = img.currentSrc || img.src;
     if (img.complete && img.naturalWidth === 0 && src) broken.push(src);
   }
-  const scrollH = document.documentElement?.scrollHeight ?? 0;
-  // A rendered canvas/svg/video is content — a pure-canvas game has no text,
-  // no <img>, no interactive DOM nodes, and must not read as a white screen.
-  const media = document.querySelectorAll('canvas,svg,video').length;
-  const blank =
-    !!body &&
-    text.length < 3 &&
-    imgs.length === 0 &&
-    interactive === 0 &&
-    media === 0 &&
-    scrollH < 60;
+
+  // Blank means nothing visible was rendered. Counting elements never worked:
+  // scrollHeight is never below the viewport, and a hidden svg sprite, a
+  // hidden input or a tracking pixel is an element too. So look for visible
+  // text, media or controls with a real box, including inside open shadow
+  // roots (web-component apps render everything there).
+  const MEDIA = new Set([
+    'img',
+    'svg',
+    'canvas',
+    'video',
+    'iframe',
+    'object',
+    'embed',
+    'input',
+    'button',
+    'select',
+    'textarea',
+  ]);
+  const visible = (el: Element): boolean => {
+    const r = el.getBoundingClientRect();
+    // Under 2px is a pixel or an sr-only clip; entirely left of or above the
+    // page is a parked skip link.
+    if (r.width < 2 || r.height < 2 || r.right + scrollX <= 0 || r.bottom + scrollY <= 0) {
+      return false;
+    }
+    return (
+      typeof el.checkVisibility !== 'function' ||
+      el.checkVisibility({ opacityProperty: true, visibilityProperty: true })
+    );
+  };
+  let budget = 20_000;
+  let textSeen = 0;
+  const rendersSomething = (root: ParentNode): boolean => {
+    for (const el of Array.from(root.querySelectorAll('*'))) {
+      // A DOM this big is not a white screen.
+      if (--budget < 0) return true;
+      if (MEDIA.has(el.localName) && visible(el)) return true;
+      for (const node of Array.from(el.childNodes)) {
+        const chars = node.nodeType === 3 ? (node.textContent ?? '').trim().length : 0;
+        if (chars && visible(el)) {
+          textSeen += chars;
+          if (textSeen >= 3) return true;
+        }
+      }
+      if (el.shadowRoot && rendersSomething(el.shadowRoot)) return true;
+      if (getComputedStyle(el).backgroundImage !== 'none' && visible(el)) return true;
+    }
+    return false;
+  };
+  // about:blank (a history step back past the first page), chrome-error:// (a
+  // navigation the fence aborted) and data: are not the app.
+  const appPage = location.protocol === 'http:' || location.protocol === 'https:';
+  const blank = !!body && appPage && document.readyState !== 'loading' && !rendersSomething(body);
 
   // Framework error overlays — error boundaries often don't re-throw to window,
   // so neither pageerror nor blank-screen fires. Match TIGHT signatures only.
