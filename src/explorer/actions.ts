@@ -223,7 +223,9 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
             result.value = fv.value.length > 60 ? `${fv.value.slice(0, 57)}…` : fv.value;
             if (fv.probe) addCanary(ctx.state, fv.canary);
             if (plan.el?.editable) {
-              await loc.click({ timeout: opTimeout }).catch(() => {});
+              // Let a failed click throw: a covered editor then gets skipped by
+              // the runner instead of typed into through the layer on top.
+              await loc.click({ timeout: opTimeout });
               await loc.pressSequentially(fv.value.slice(0, 2000), { timeout: opTimeout });
             } else {
               await loc.fill(fv.value.slice(0, 2000), { timeout: opTimeout });
@@ -248,7 +250,7 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
             } else {
               // Custom ARIA combobox/listbox: open it, then click a visible option
               // (often portal-rendered at the document root).
-              await loc.click({ timeout: opTimeout }).catch(() => {});
+              await loc.click({ timeout: opTimeout });
               const options = page.locator(
                 '[role="option"]:visible, [role="menuitemradio"]:visible',
               );
