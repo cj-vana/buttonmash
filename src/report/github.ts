@@ -53,9 +53,17 @@ export function emitGitHub(result: RunResult): void {
 
   const f = result.stats.findingsBySeverity;
   const verdict = result.run.exitCode === 0 ? '✅ PASSED' : '❌ FAILED';
-  // Truncate BEFORE escaping (a cut mid-escape leaves a dangling backslash),
-  // and escape the URL cell too — browsers don't encode `|` in query strings.
-  const cell = (s: string, max: number) => s.slice(0, max).replace(/\|/g, '\\|');
+  // Titles and URLs come from the page. Truncate BEFORE escaping (a cut
+  // mid-escape leaves a dangling backslash), fold line breaks that would end the
+  // row, and escape what markdown or HTML would act on: `|` splits the cell,
+  // `[x](url)` becomes a link, `<img>` renders as HTML.
+  const cell = (s: string, max: number) =>
+    s
+      .slice(0, max)
+      .replace(/[\r\n]+/g, ' ')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/[\\|[\]()*_`]/g, '\\$&');
   const rows = orderedFindings
     .slice(0, 50)
     .map((x) =>
