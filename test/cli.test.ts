@@ -8,6 +8,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { createProgram } from '../src/cli-program';
 import { loadConfig } from '../src/config/load';
+import type { Config } from '../src/config/schema';
+import { EXIT } from '../src/core/types';
+import { finalizeRun } from '../src/explorer/run-result';
 import { startServer, type TestServer } from './helpers/server';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -126,6 +129,90 @@ describe('CLI contract', () => {
       /^\s*\/\/ auth: \{ storageState: 'playwright\/\.auth\/user\.json' \},$/m,
     );
   });
+});
+
+/** Like `run`, but without blocking this process: the test server lives here. */
+function runAsync(args: string[], cwd = root) {
+  const child = spawn(process.execPath, [cli, ...args], {
+    cwd,
+    env: { ...process.env, NO_COLOR: '1' },
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString()));
+  child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString()));
+  return new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) =>
+    child.on('close', (status) => resolve({ status, stdout, stderr })),
+  );
+}
+
+/** A results.json for `overrides`, finalized and redacted the way a run writes it. */
+async function writeResults(directory: string, overrides: Config): Promise<string> {
+  const cfg = await loadConfig({ ignoreConfigFile: true, overrides });
+  const result = finalizeRun({
+    cfg,
+    startedAt: new Date(),
+    startTimeMs: Date.now(),
+    signals: [],
+    actions: [],
+    screenshots: new Map(),
+    pagesVisited: 1,
+    statesDiscovered: 1,
+    recordsCreated: 0,
+    completion: { complete: true, incompleteExitCode: EXIT.FINDINGS },
+  });
+  const path = join(directory, 'results.json');
+  writeFileSync(path, JSON.stringify(result));
+  return path;
+}
+
+describe('doctor baseline check', () => {
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await startServer();
+  });
+
+  afterAll(async () => {
+    await server?.close();
+  });
+
+  it('takes the run flags that decide whether a baseline is comparable', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-doctor-'));
+    temporaryDirectories.push(directory);
+    const baseline = await writeResults(directory, {
+      target: server.url,
+      seed: 'ci',
+      routes: ['/app'],
+      budget: { maxActions: 50, maxDurationMs: 90_000 },
+      guardrails: { dryRun: true },
+      failOn: 'medium',
+    });
+    const runFlags = [
+      '--seed',
+      'ci',
+      '--route',
+      '/app',
+      '--max-actions',
+      '50',
+      '--max-duration',
+      '90',
+      '--dry-run',
+      '--fail-on',
+      'medium',
+    ];
+
+    const same = await runAsync(
+      ['doctor', server.url, '--baseline', baseline, ...runFlags],
+      directory,
+    );
+    expect(same.stderr).not.toContain('unknown option');
+    expect(same.stdout).toContain('baseline: baseline is readable and comparable');
+    expect(same.status).toBe(0);
+
+    const differs = await runAsync(['doctor', server.url, '--baseline', baseline], directory);
+    expect(differs.stdout).toContain('pass doctor the same flags you pass to run');
+  }, 60_000);
 });
 
 describe('CLI interruption', () => {

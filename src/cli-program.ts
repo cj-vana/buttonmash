@@ -152,7 +152,7 @@ async function doDoctor(url: string | undefined, opts: RunOpts): Promise<never> 
     const cfg = await loadConfig({
       configPath: opts.config,
       overrides: buildOverrides(url, opts),
-      append: { allowedOrigins: opts.allowOrigin },
+      append: { routes: opts.route, allowedOrigins: opts.allowOrigin },
     });
     logger.setLevel(cfg.logLevel);
     logger.banner('🩺 buttonmash doctor');
@@ -230,6 +230,15 @@ export function createProgram(): Command {
     .option('--billing <mode>', 'live-billing guard: refuse | warn | off')
     .option('--baseline <results.json>', 'validate and compare with a previous results.json')
     .option('--baseline-id <id>', 'comparison identity for authenticated/header-dependent runs')
+    // These do not change the preflight itself; they are part of the config
+    // a baseline is compared on, so doctor needs the values run will use.
+    .option('-s, --seed <seed>', 'the seed run will use (baseline check)')
+    .option('--route <url...>', 'the extra routes run will sweep (baseline check)')
+    .option('--max-actions <n>', 'the --max-actions run will use (baseline check)')
+    .option('--max-duration <seconds>', 'the --max-duration run will use (baseline check)')
+    .option('--fail-on <severity>', 'the --fail-on run will use (baseline check)')
+    .option('--dry-run', 'the run will be read-only (baseline check)')
+    .option('--headed', 'the run will be headed; doctor itself stays headless (baseline check)')
     .option('--log-level <level>', 'silent|error|warn|info|debug')
     .action((url: string | undefined, opts: RunOpts) => doDoctor(url, opts));
 
