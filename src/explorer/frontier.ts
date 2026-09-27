@@ -1,5 +1,5 @@
-import { normalizeUrl, routePath } from '../core/hash';
-import { anyMatch } from '../core/regex';
+import { normalizeUrl } from '../core/hash';
+import { pathGuardReason } from './route-guard';
 
 export interface RouteFrontierOptions {
   allowedOrigins: ReadonlySet<string>;
@@ -37,10 +37,12 @@ export class RouteFrontier {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
     if (!this.options.allowedOrigins.has(url.origin)) return;
 
-    const path = routePath(url);
-    if (this.options.blockedPath?.test(path)) return;
-    if (this.options.excludePaths.length && anyMatch(path, this.options.excludePaths)) return;
-    if (this.options.includePaths.length && !anyMatch(path, this.options.includePaths)) return;
+    const guards = {
+      blocked: this.options.blockedPath ?? null,
+      include: this.options.includePaths,
+      exclude: this.options.excludePaths,
+    };
+    if (pathGuardReason(url, guards)) return;
 
     const normalized = normalizeUrl(raw);
     if (

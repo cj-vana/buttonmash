@@ -32,6 +32,25 @@ describe('route frontier', () => {
     expect(frontier.visitedCount).toBe(1);
   });
 
+  it('guards query-routed and anchored hash-routed paths too', async () => {
+    const frontier = makeFrontier({
+      blockedPath: /route=account\/logout|^\/billing/i,
+      excludePaths: [/^\/admin/],
+    });
+    frontier.enqueue('https://app.test/index.php?route=account/logout'); // OpenCart logout
+    frontier.enqueue('https://app.test/#/billing');
+    frontier.enqueue('https://app.test/#/admin/users');
+    frontier.enqueue('https://app.test/#/projects');
+
+    const visited: string[] = [];
+    while (
+      await frontier.visitNext(async (url) => {
+        visited.push(url);
+      })
+    );
+    expect(visited).toEqual(['https://app.test/#/projects']);
+  });
+
   it('honors include paths, capacity, and crashed-route suppression', async () => {
     const frontier = makeFrontier({ includePaths: [/^\/app/], capacity: 2 });
     frontier.enqueue('https://app.test/public');
