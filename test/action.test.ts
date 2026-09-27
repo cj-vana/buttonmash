@@ -110,6 +110,42 @@ function baseArgv(workspace: string): string[] {
   return ['run', TARGET, '--browser', 'chromium', '--out', `${workspace}/buttonmash-report`];
 }
 
+describe('action install step', () => {
+  function install(version: string) {
+    const log = join(sandbox, 'stub.log');
+    for (const tool of ['npm', 'npx']) {
+      writeExecutable(join(sandbox, 'stubs', tool), `printf '${tool} %s\\n' "$*" >> "$STUB_LOG"`);
+    }
+    const step = runStep(
+      'install',
+      { BM_VERSION: version, BM_BROWSER: 'firefox', GITHUB_ACTION_PATH: root, STUB_LOG: log },
+      sandbox,
+    );
+    return { ...step, calls: readFileSync(log, 'utf8').split('\n').filter(Boolean) };
+  }
+
+  it("installs the version in the action's own package.json when version is empty", () => {
+    expect(inputDefault('version')).toBe('');
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as { version: string };
+    const step = install('');
+    expect(step.status).toBe(0);
+    expect(step.calls).toContain(`npm i buttonmash@${pkg.version}`);
+    expect(step.calls).toContain('npx playwright install --with-deps firefox');
+    expect(step.outputs.dir).toBe(join(sandbox, 'buttonmash'));
+  });
+
+  it.each(['latest', '0.1.9', 'file:/runner/buttonmash-0.2.0.tgz'])(
+    'installs an explicit version %s as given',
+    (version) => {
+      expect(install(version).calls).toContain(`npm i buttonmash@${version}`);
+    },
+  );
+
+  it('sets up a supported Node by default', () => {
+    expect(inputDefault('node-version')).toBe('24');
+  });
+});
+
 describe('action upload step', () => {
   it('names the artifact from the report-name input so matrix jobs can differ', () => {
     expect(inputDefault('report-name')).toBe('buttonmash-report');

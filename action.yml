@@ -12,13 +12,13 @@ inputs:
     required: false
     default: ''
   version:
-    description: 'buttonmash npm version to run.'
+    description: 'buttonmash npm version or spec to install (latest, 0.3.0, a file: tarball). Empty installs the version in the package.json of the action ref you use, so @v0.3.0 runs 0.3.0.'
     required: false
-    default: 'latest'
+    default: ''
   node-version:
     description: 'Node version.'
     required: false
-    default: '20'
+    default: '24'
   browser:
     description: 'Browser engine: chromium | firefox | webkit. The action installs this engine before it can read your config and passes it as --browser, so it decides the engine and overrides browser in a buttonmash config file.'
     required: false
@@ -60,6 +60,11 @@ runs:
         DIR="${RUNNER_TEMP:-/tmp}/buttonmash"
         mkdir -p "$DIR" && cd "$DIR"
         npm init -y >/dev/null 2>&1
+        # Empty means the release this copy of the action belongs to, so
+        # cj-vana/buttonmash@v0.3.0 installs buttonmash 0.3.0, not latest.
+        if [ -z "$BM_VERSION" ]; then
+          BM_VERSION=$(node -p "require(process.env.GITHUB_ACTION_PATH + '/package.json').version")
+        fi
         npm i "buttonmash@${BM_VERSION}" >/dev/null
         # Install the browser matching buttonmash's bundled Playwright version.
         npx playwright install --with-deps "${BM_BROWSER}"
