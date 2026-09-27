@@ -84,8 +84,7 @@ async function invalidCount(ctx: ActionContext, form: FormDescriptor): Promise<n
           let n = 0;
           for (const sel of selectors) {
             const el = document.querySelector(sel) as
-              | (HTMLElement & { validity?: ValidityState })
-              | null;
+              (HTMLElement & { validity?: ValidityState }) | null;
             if (!el) continue; // gone (likely submitted/navigated) → not invalid
             const ariaInvalid = el.getAttribute('aria-invalid') === 'true';
             const nativeInvalid = el.validity ? el.validity.valid === false : false;

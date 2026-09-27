@@ -12,11 +12,14 @@ export default defineConfig({
       reporter: ['text', 'html'],
       include: ['src/**/*.ts'],
       exclude: ['src/cli.ts'],
+      // Measured under Vitest 4's AST-aware V8 remapping, which counts the
+      // callbacks handed to page.evaluate (they run in the browser, never in
+      // Node) as uncovered. Vitest 2's figures ran higher on the same tests.
       thresholds: {
-        statements: 75,
-        branches: 73,
-        functions: 83,
-        lines: 75,
+        statements: 68,
+        branches: 58,
+        functions: 68,
+        lines: 70,
         'src/capture/artifacts.ts': {
           statements: 95,
           branches: 95,
@@ -26,8 +29,8 @@ export default defineConfig({
         'src/baseline.ts': { statements: 90, branches: 80, functions: 100, lines: 90 },
         'src/detectors/page-checks.ts': {
           statements: 50,
-          branches: 75,
-          functions: 60,
+          branches: 58,
+          functions: 38,
           lines: 50,
         },
         'src/explorer/frontier.ts': {
