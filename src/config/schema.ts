@@ -18,6 +18,10 @@ function isValidRegex(pattern: string): boolean {
   }
 }
 
+/** A user-supplied regex string. Invalid ones are a config error: dropping one
+ *  at run time can remove a safety block or widen a crawl scope. */
+const RegexSchema = z.string().refine(isValidRegex, 'must be a valid regular expression');
+
 const ViewportSchema = z
   .object({
     width: z.number().int().positive().default(1280),
@@ -52,9 +56,9 @@ const AuthSchema = z
     loginScript: LoginScriptSchema.optional(),
     /** Regex (string) for URLs that indicate a logged-out / login page. Used to
      *  detect a session drop mid-run (only when auth is configured). */
-    loginUrlPattern: z
-      .string()
-      .default('(log[-_]?in|sign[-_]?in|/login\\b|/signin\\b|auth/login|/sso\\b)'),
+    loginUrlPattern: RegexSchema.default(
+      '(log[-_]?in|sign[-_]?in|/login\\b|/signin\\b|auth/login|/sso\\b)',
+    ),
   })
   .default({});
 
@@ -156,9 +160,7 @@ const DestructiveSchema = z
     /** Regexes (case-insensitive) for control names that only look destructive,
      *  e.g. '^reset zoom$'. A match skips the verb check; dangerous hrefs and
      *  form actions stay blocked. */
-    safeNames: z
-      .array(z.string().refine(isValidRegex, 'must be a valid regular expression'))
-      .default([]),
+    safeNames: z.array(RegexSchema).default([]),
     /** DANGEROUS: allow clicking destructive controls anyway. */
     allow: z.boolean().default(false),
   })
@@ -191,12 +193,12 @@ const GuardrailsSchema = z
     /** Origins the monkey may navigate to. Empty → just the target's origin. */
     allowedOrigins: z.array(z.string()).default([]),
     /** Extra regex strings for paths to hard-block, even on allowed origins. */
-    blockedPathPatterns: z.array(z.string()).default([]),
+    blockedPathPatterns: z.array(RegexSchema).default([]),
     /** If non-empty, only crawl paths matching one of these regexes (scope a
      *  sweep to e.g. ^/app/). */
-    includePaths: z.array(z.string()).default([]),
+    includePaths: z.array(RegexSchema).default([]),
     /** Never crawl paths matching these regexes. */
-    excludePaths: z.array(z.string()).default([]),
+    excludePaths: z.array(RegexSchema).default([]),
     destructive: DestructiveSchema,
     billing: BillingSchema,
     secrets: SecretsSchema,
@@ -210,7 +212,7 @@ const GuardrailsSchema = z
 const CustomDetectorSchema = z.object({
   name: z.string(),
   /** Regex (as string) matched against the chosen target text. */
-  pattern: z.string(),
+  pattern: RegexSchema,
   severity: SeveritySchema.default('medium'),
   target: z.enum(['console', 'dom', 'url']).default('console'),
 });
@@ -242,7 +244,7 @@ const DetectorsSchema = z
      *  low so they don't redden the build. First-party errors stay high. */
     thirdPartyConsole: z.boolean().default(false),
     /** Regex allowlist of benign console/network noise to ignore. */
-    ignorePatterns: z.array(z.string()).default([]),
+    ignorePatterns: z.array(RegexSchema).default([]),
   })
   .default({});
 

@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,19 @@ describe('CLI contract', () => {
     const result = run(['run', 'https://example.test', '--fail-on', 'apocalyptic']);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('--fail-on must be one of');
+  });
+
+  it('exits 2 and names the field for an invalid regex in the config', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-cli-'));
+    temporaryDirectories.push(directory);
+    const config = join(directory, 'bad-regex.json');
+    writeFileSync(config, JSON.stringify({ guardrails: { blockedPathPatterns: ['delete ('] } }));
+
+    for (const command of ['run', 'doctor']) {
+      const result = run([command, 'https://example.test', '--config', config]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('guardrails.blockedPathPatterns.0');
+    }
   });
 
   it('scaffolds config and refuses to overwrite it without --force', () => {

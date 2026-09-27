@@ -159,6 +159,28 @@ describe('loadConfig', () => {
     ).rejects.toBeInstanceOf(ConfigError);
   });
 
+  it('rejects every invalid regex field instead of dropping the pattern', async () => {
+    // A dropped blockedPathPatterns entry silently removes a safety block, and
+    // an all-invalid includePaths widens the crawl to the whole site.
+    const bad = 'reset (';
+    const cases: [Record<string, unknown>, string][] = [
+      [{ guardrails: { blockedPathPatterns: ['^/ok$', bad] } }, 'guardrails.blockedPathPatterns.1'],
+      [{ guardrails: { includePaths: [bad] } }, 'guardrails.includePaths.0'],
+      [{ guardrails: { excludePaths: [bad] } }, 'guardrails.excludePaths.0'],
+      [{ detectors: { ignorePatterns: [bad] } }, 'detectors.ignorePatterns.0'],
+      [{ detectors: { custom: [{ name: 'x', pattern: bad }] } }, 'detectors.custom.0.pattern'],
+      [{ auth: { loginUrlPattern: bad } }, 'auth.loginUrlPattern'],
+    ];
+    for (const [overrides, field] of cases) {
+      const load = loadConfig({
+        ignoreConfigFile: true,
+        overrides: { target: 'https://x.test', ...overrides },
+      });
+      await expect(load).rejects.toBeInstanceOf(ConfigError);
+      await expect(load).rejects.toThrow(`${field}: must be a valid regular expression`);
+    }
+  });
+
   it('resolves a baseline path and requires one for fail-on-new mode', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,
