@@ -131,11 +131,28 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.2.0
+      - uses: cj-vana/buttonmash@v0.3.0
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
 ```
+
+The action runs the buttonmash release that matches its own tag (`@v0.3.0`
+installs 0.3.0) and reads a committed `buttonmash.config.*` from the
+workspace. Its inputs:
+
+| Input | Default | What it does |
+|---|---|---|
+| `target` | (required) | URL of the running app |
+| `args` | | Extra CLI flags, split like a shell command line (`--baseline-id "staging admin"` stays one value, nothing is globbed). `--out` and `--browser` are refused: use `report-name` and `browser` |
+| `fail-on` | from your config | Minimum severity that fails the job; set it only to override `failOn` |
+| `browser` | `chromium` | The engine to install and run; overrides `browser` in your config |
+| `version` | the action's release | Any npm version or spec (`latest`, `0.3.0`, a `file:` tarball) |
+| `node-version` | `24` | Node for `actions/setup-node`, which stays on PATH for the rest of the job; `''` skips it |
+| `upload-report` | `true` | Upload `buttonmash-report/` as an artifact |
+| `report-name` | `buttonmash-report` | Artifact name; set one per job in a matrix, since names must be unique |
+
+Outputs: `exit-code`, `findings` (the count), and `report-path`.
 
 Or wire it by hand for full control:
 
@@ -149,18 +166,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
-        with: { node-version: 20, cache: npm }
+        with: { node-version: 24, cache: npm }
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       # start your app under test here (e.g. npm run start &) and wait for it…
-      - run: npx buttonmash run http://localhost:3000 --seed ci --fail-on high
+      # A storageState captured with `buttonmash auth` and stored as a secret:
+      - run: printf '%s' "$STORAGE_STATE" > "$RUNNER_TEMP/user.json"
         env:
-          # storageState captured locally and stored as a secret (base64 or file)
           STORAGE_STATE: ${{ secrets.BUTTONMASH_STORAGE_STATE }}
+      - run: npx buttonmash run http://localhost:3000 --seed ci --auth "$RUNNER_TEMP/user.json"
       - uses: actions/upload-artifact@v5
         if: ${{ !cancelled() }}
         with: { name: buttonmash-report, path: buttonmash-report/ }
 ```
+
+A configured auth file that is missing or unreadable stops the run with exit
+code `2` rather than quietly testing the logged-out app.
 
 buttonmash auto-detects GitHub Actions and emits inline annotations plus a job-summary
 table. The non-zero exit code fails the job.
@@ -173,14 +194,15 @@ keep the `results.json`, and pass it back as a baseline: known findings stay
 visible in every report, but only **new** breakage fails the build.
 
 ```bash
-npx buttonmash run https://staging.example.com \
+npx buttonmash run https://staging.example.com --seed ci \
   --baseline previous-results.json \
   --fail-on-new
 ```
 
 JSON, HTML, terminal, and GitHub summaries classify current findings as **new**,
 severity-**updated**, or **existing**. An absent finding is called **resolved**
-only when both runs completed with the same exploration configuration; otherwise
+only when both runs completed with the same exploration configuration (seed
+included, so pin `--seed` on both runs) and the same buttonmash version; otherwise
 it is conservatively listed as **not observed**. JUnit failure counts and SARIF
 baseline states follow the same new-finding policy.
 `--fail-on-new` requires a baseline; without it, the normal severity-based exit
@@ -212,11 +234,16 @@ Controls:
 - `explore.crawl: false` disables auto-crawl and only sweeps `target` + `routes`.
 
 Dangerous paths (logout/delete/cancel) and off-origin URLs are never enqueued.
+Path guards (`blockedPathPatterns`, `includePaths`, `excludePaths`) match the
+path with its query too, so a query-routed `/index.php?route=account/logout` is
+caught, and a client-side navigation (pushState or hash) into a guarded path is
+left before anything on it is touched.
 
 Hash-router SPAs are first-class: `#/route` and `#!/route` fragments count as
 distinct pages in the frontier and stats (plain `#anchor` fragments don't), and
-path guards like `blockedPathPatterns` apply to the hash route too. A
-`#/account/delete` link is guarded exactly like `/account/delete`.
+path guards apply to the hash route too, anchored patterns included: a
+`#/account/delete` link is guarded exactly like `/account/delete`, and
+`^/billing` matches `#/billing`.
 
 Discovery also reaches **inside open shadow DOM** (web-component design systems like
 Salesforce LWC, Ionic, Shoelace/Lit/Material Web) and **same-origin iframes**
@@ -226,7 +253,10 @@ It's built to survive messy real apps on long CI sweeps: it **recovers from
 renderer crashes** (recreates the page and continues, skipping the page that
 crashed), opens **custom ARIA dropdowns** and picks an option, **declines file
 pickers** so a file input can't hang the run, and you can **scope the crawl**
-with `guardrails.includePaths` / `excludePaths`.
+with `guardrails.includePaths` / `excludePaths`. On canvas-heavy apps, where a
+drawing layer often sits over part of the toolbar, a control whose click times
+out is **skipped for the rest of the run on that page** instead of burning the
+interaction timeout on every pick.
 
 ## Self-populating (form completion)
 
@@ -236,15 +266,20 @@ required field (and a fraction of optional ones) with **valid, deterministic**
 values inferred from each field's type/label/pattern/min-max/options (real
 emails, in-range numbers, seeded dates, a chosen `<select>` option, mirrored
 password-confirm), clicks the form's **safe** submit, repairs on validation
-errors, and follows into the created record so deep editors get exercised. No
-per-site config; detection is structural, so it works on any app.
+errors with fresh values, and follows into the created record so deep editors
+get exercised. No per-site config; detection is structural, so it works on any
+app.
 
 It stays safe by reusing the same guardrails: it **never submits** a form with a
 credit-card field, an auth/login/signup form (would mutate your session), or one
 whose submit is destructive, and the network fence still blocks live payments.
-One free-text field per form carries a reflected-input canary, so created
-records still feed the XSS oracle. Bounded by `explore.forms.maxRecords`;
-`--dry-run` fills but never submits. Turn it off with `explore.forms.enabled: false`.
+The submit it classified is marked before any field is filled, so a form whose
+layout shifts while it is filled still gets that button, and a covered submit
+is never swapped for Enter (which would submit through the form's first
+button). One free-text field per form carries a reflected-input canary, so
+created records still feed the XSS oracle. Bounded by
+`explore.forms.maxRecords`; `--dry-run` skips form completion entirely, since
+filling alone can trigger autosave. Turn it off with `explore.forms.enabled: false`.
 
 ## Configuration
 
@@ -289,7 +324,11 @@ export default defineConfig({
     // excludePaths: ['/admin'],     // never crawl these
     billing: { mode: 'refuse' },   // refuse | warn | off
     // dryRun: true,                // read-only: explore without submitting
-    destructive: { enabled: true, extraVerbs: ['archivar'] },
+    destructive: {
+      enabled: true,
+      extraVerbs: ['archivar'],
+      safeNames: ['^reset zoom$'], // regexes for names that only look destructive
+    },
   },
 
   detectors: {
@@ -329,13 +368,13 @@ export default defineConfig({
 
 - **Uncaught JS errors** and `console.error`
 - **HTTP 4xx/5xx** responses and failed requests
-- **Renderer crashes** and **hangs / unresponsive pages** (wall-clock watchdog)
+- **Renderer crashes** and **hangs / unresponsive pages** (a wall-clock watchdog, plus a responsiveness probe whenever an action times out)
 - **Framework error overlays** (Next.js/Vite/React, "Application error"), caught even when an error boundary swallows the throw
 - **Blank screens** ("white screen of death") and **broken images**
 - **Reflected input**, a safe canary probe that flags possible XSS sinks (never injects executing payloads)
 - **Client-exposed secrets** (Stripe/AWS/GitHub/Slack/… keys, gitleaks-derived)
 - **Accessibility** violations via axe-core (opt-in)
-- **Session loss**, flagged when an authed run gets redirected to a login page mid-run (expired session); with a login script configured it re-authenticates and continues
+- **Session loss**, flagged when an authed run gets redirected to a login page mid-run (expired session); with a login script configured it re-authenticates and continues, and a login script that never gets in ends the run as a failure
 - Your own **custom signals** (console/DOM/url regex rules)
 
 Findings are **deduplicated** (the same bug firing 500× becomes one finding with
@@ -345,8 +384,12 @@ loops, React dev warnings, HMR…) and **downgrades third-party `console.error`*
 (analytics/chat/payment SDKs) so they don't redden your build; first-party
 errors stay high (`detectors.thirdPartyConsole: true` to opt in). State dedup is
 **structural** by default, so live counters/clocks don't explode the state space
-on dynamic apps. And if CI cancels or times out mid-run, a **partial report is
-still written** (SIGTERM-safe) so you never lose the findings collected so far.
+on dynamic apps. Requests buttonmash's own fence blocks (a web font under
+`blockMedia`, a logout ping) are never reported as app errors, in any engine. A
+control another layer covers (a canvas, a stuck overlay) costs one timeout per
+page, not one per pick. And if CI cancels or times out mid-run (SIGINT or
+SIGTERM), a **partial report is still written** with exit code `2`, so you never
+lose the findings collected so far.
 
 ## Safety
 
@@ -357,23 +400,33 @@ buttonmash is built to break things without breaking *you*:
 - **Skip destructive controls.** Buttons/links matching a multilingual verb
   list (delete, pay, logout, cancel subscription, …), or pointing at dangerous
   paths (`/logout`, `/account/delete`, `/billing/cancel`), are detected and
-  downgraded to a harmless hover.
+  downgraded to a harmless hover. If a benign control trips the verb list
+  ("Reset zoom" matches "reset"), exempt its name with
+  `destructive.safeNames`; the path checks still apply to it.
+- **Act only on what was checked.** Enter in a form field is skipped when it
+  would submit through a destructive, login or card form's default button, and
+  a forced checkbox click is refused when something else lies on top of the
+  checkbox, so the click can't land on a dialog's "Delete all".
 - **Refuse live billing.** If live Stripe/Braintree keys or live processor hosts
   are detected, buttonmash aborts (`billing.mode: 'refuse'`) and tells you to switch
   to test mode. Publishable test keys are fine.
 - **Redact secrets.** Anything matching a secret pattern is scrubbed before it's
-  written to any report or artifact; auth/cookie headers are never persisted.
+  written to `results.json`, JUnit, SARIF or the HTML report, and auth/cookie
+  headers never appear in them. A Playwright trace can't be scrubbed, so
+  `trace.zip` is off by default for any run with credentials (headers, basic
+  auth, a login script or a storageState); turning it on logs a warning.
 - **Dismiss, never confirm.** Native `confirm()`/`beforeunload` dialogs are
   always dismissed, so the monkey can't click "Yes, delete".
 - **Dry-run mode.** `--dry-run` explores read-only: hover, scroll, navigate
-  links, with no form submits, typing, or mutations.
+  links, with no form filling or submits, typing, or mutations.
 
 ## Reports & exit codes
 
 Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 (for CI test rendering), a self-contained `report.html`
 ([live example](https://cj-vana.github.io/buttonmash/)), and `results.sarif`
-(for GitHub code-scanning). On GitHub Actions it additionally emits inline
+(for GitHub code scanning; each alert is located at the page's `host/path`, with
+the full URL in its message). On GitHub Actions it additionally emits inline
 `::error` annotations for the top findings and a markdown job summary. No
 setup needed. Exit codes follow the pytest/ESLint convention:
 
@@ -427,8 +480,8 @@ launch (Playwright) → auth (storageState) → fence (origin/dialogs/popups)
 - Pure random/coverage exploration can under-explore deep multi-step flows.
 - Heuristic destructive detection covers English, Spanish, German, French,
   Japanese, Chinese, Korean, Russian, and Arabic verbs; extend
-  `destructive.extraVerbs` for your UI. **Sandbox + test mode is the real safety
-  net.**
+  `destructive.extraVerbs` for your UI and exempt false alarms with
+  `destructive.safeNames`. **Sandbox + test mode is the real safety net.**
 
 ## Development
 

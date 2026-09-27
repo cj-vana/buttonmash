@@ -23,9 +23,10 @@ exists for.
 
 - buttonmash v0.2.0, Chromium, seed `casestudy`, budgets of 300 to 400 actions
   and 90 to 120 seconds per run. Every run replays from its seed.
-- Production builds, served locally. Nothing was run against anyone's hosted
-  service, and no external backend was touched: the origin fence blocks
-  off-origin traffic by default.
+- Production builds, served locally, so the monkey never navigated to anyone's
+  hosted service: the origin fence blocks off-origin page loads. In 0.2.0 it
+  did not block an app's own background requests to other hosts, so this is
+  not a claim that no external backend saw traffic.
 - Default config except where shown; trace capture off to keep reports small.
 
 ## TodoMVC React: passed, with one persistent 404
@@ -49,8 +50,8 @@ recovered, logged as low-severity guardrail notes.
 
 The naive run failed with 2 high findings, but one of them was our sandbox, not
 Excalidraw: the app kept retrying its collab WebSocket
-(`oss-collab.excalidraw.com`), which the fence blocks, and logged a
-`console.error` each time (16 of them, deduplicated to one finding). Two ignore
+(`oss-collab.excalidraw.com`), which failed to connect from the sandbox, and
+logged a `console.error` each time (16 of them, deduplicated to one finding). Two ignore
 patterns make the sandbox noise disappear:
 
 ```json
@@ -75,7 +76,9 @@ step on every replay of seed `casestudy`.
 Two more things worth knowing about canvas-heavy apps:
 
 - The destructive-verb guardrail refused to click "Reset zoom" three times
-  ("reset" is on the verb list). Conservative, and tunable if you disagree.
+  ("reset" is on the verb list). Conservative; in 0.2.0 the only way around it
+  was turning the whole guard off, and 0.3.0 adds `destructive.safeNames` for
+  exactly this.
 - About two dozen clicks timed out on canvas-overlay elements and were logged
   as low-severity driver errors. Each timeout burns its 4-second budget, which
   is why the run managed only ~40 actions in 120 seconds. Canvas UIs are
@@ -86,8 +89,9 @@ Two more things worth knowing about canvas-heavy apps:
 ## JSON Crack: clean after the same two-line tune
 
 The naive run failed with 5 high findings, every one of them a
-`console.error: Failed to load resource: net::ERR_BLOCKED_BY_CLIENT` from the
-fence blocking the app's off-origin calls. Same `ignorePatterns` fix as above.
+`console.error: Failed to load resource: net::ERR_BLOCKED_BY_CLIENT`: Chromium's
+echo of requests buttonmash's own fence had blocked (`ERR_BLOCKED_BY_CLIENT` is
+the abort code the fence uses). Same `ignorePatterns` fix as above.
 
 The tuned run passed: 110 actions in the naive pass and 59 in the tuned pass,
 crawling 6 pages (`/`, `/editor`, `/docs`, the legal pages) and 23 distinct UI
@@ -100,10 +104,11 @@ it.
 
 ## What we took away
 
-1. **First runs are noisy in a predictable way.** A fenced sandbox blocks the
-   app's external calls, and the app complains to the console about it. Two
-   lines of `ignorePatterns`, or a saved baseline with `--fail-on-new`, gets
-   you from noise to signal in minutes.
+1. **First runs are noisy in a predictable way.** The sandbox blocks some of
+   what the app loads (fonts, embeds, pages on other hosts), and the app or the
+   browser complains to the console about it. Two lines of `ignorePatterns`,
+   or a saved baseline with `--fail-on-new`, gets you from noise to signal in
+   minutes.
 2. **Real findings replay.** The Excalidraw clipboard error is not a flake; the
    same seed produces the same click at the same step every time.
 3. **Passing means something.** JSON Crack passing is evidence the export
@@ -111,6 +116,21 @@ it.
 4. **The guardrails earn their keep.** Across five runs the fence recovered
    dozens of attempted off-origin escapes and the verb list kept the monkey off
    anything labeled destructive, on apps it had never seen.
+
+## What 0.3.0 changed because of this
+
+The reports above are the 0.2.0 runs and have not been regenerated. Three of
+the rough edges they show are fixed in 0.3.0:
+
+- The console echo of requests the fence blocks is no longer reported, in
+  Chromium, Firefox or WebKit. That echo was all five of JSON Crack's
+  first-run high findings.
+- A control whose click times out is skipped for the rest of the run on that
+  page. In the Excalidraw run, 22 clicks each waited out the 4-second timeout
+  on toolbar buttons under the canvas layer; now each costs one timeout.
+- "Reset zoom" and similar names can be exempted with
+  `destructive.safeNames`, and agent nouns such as "Eraser" no longer match a
+  verb like "erase".
 
 Findings that look like app bugs will be reported upstream to the respective
 projects.
