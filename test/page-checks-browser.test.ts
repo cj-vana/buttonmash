@@ -68,6 +68,20 @@ async function runChecks(newState: boolean): Promise<void> {
 
 const isBlank = (signals: string[]) => signals.some((s) => s.startsWith('blank-screen/'));
 
+describe('window globals', () => {
+  it('finds a live key that exists only in a global, next to a cyclic one', async () => {
+    // Joined at runtime so the key is not in the page source.
+    const html =
+      '<!doctype html><p>Checkout</p><script>' +
+      "window.__APP_CONFIG__ = { stripeKey: ['pk', 'live', 'a1B2c3D4e5F6g7H8i9J0k1L2'].join('_') };" +
+      'window.cyclic = {}; window.cyclic.self = window.cyclic;' +
+      "Object.defineProperty(window, 'explodes', { enumerable: true, get() { throw new Error('no'); } });" +
+      '</script>';
+    const signals = await check(html, true);
+    expect(signals).toContain('billing-live/critical: live-key-in-page:stripe-pk-live');
+  });
+});
+
 describe('reflected input', () => {
   const CANARY = 'cnry1a2b3c4dzz';
   /** fuzz.ts's reflection probe: quote and angle characters, then the canary. */

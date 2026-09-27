@@ -265,11 +265,27 @@ export async function runPageChecks(deps: PageCheckDeps, newState: boolean): Pro
     );
     globals = await withDeadline(
       page.evaluate(() => {
-        try {
-          return JSON.stringify(window).slice(0, 200_000);
-        } catch {
-          return '';
+        // JSON.stringify(window) throws on the window.window cycle on every
+        // page, so each of the page's own globals is serialized on its own.
+        // Accessors are browser APIs (document, location, ...) and are skipped
+        // without running their getters; the node budget bounds the work a
+        // huge state tree can cost the page.
+        const cap = 200_000;
+        let nodes = 50_000;
+        const budgeted = (_key: string, value: unknown) => (nodes-- > 0 ? value : undefined);
+        let out = '';
+        for (const key of Object.keys(window)) {
+          const desc = Object.getOwnPropertyDescriptor(window, key);
+          if (!desc || !('value' in desc) || typeof desc.value === 'function') continue;
+          try {
+            const json = JSON.stringify(desc.value, budgeted);
+            if (json) out += `${key}=${json}\n`;
+          } catch {
+            // a cycle or a throwing toJSON: skip this global, keep the rest
+          }
+          if (out.length >= cap || nodes <= 0) break;
         }
+        return out.slice(0, cap);
       }),
       6_000,
       'page-checks/globals',
