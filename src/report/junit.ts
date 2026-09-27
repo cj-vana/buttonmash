@@ -6,7 +6,7 @@
  * name don't silently drop findings.
  */
 import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { isFailingFinding } from '../baseline';
 import { EXIT, type Finding, type RunResult } from '../core/types';
@@ -38,7 +38,19 @@ function reproText(f: Finding): string {
   return `${f.description}\n\nLocation: ${f.location.url}\nSeen ${f.count}× (first at action #${f.firstSeenStep})\n\nRepro:\n${steps}`;
 }
 
-export function toJUnit(result: RunResult): string {
+/**
+ * GitLab resolves `[[ATTACHMENT|path]]` against $CI_PROJECT_DIR, the directory
+ * buttonmash runs in, not against the report directory. A report directory
+ * outside the working directory gets the absolute path rather than a `../` climb.
+ */
+function attachmentPath(outDir: string, artifactPath: string): string {
+  const abs = resolve(outDir, artifactPath);
+  const rel = relative(process.cwd(), abs);
+  const outside = rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel);
+  return (outside ? abs : rel).split(sep).join('/');
+}
+
+export function toJUnit(result: RunResult, outDir: string): string {
   const { findings } = result;
   const suiteName = `buttonmash (${result.run.target})`;
   const runFailed = result.run.exitCode === EXIT.ERROR || result.run.complete === false;
@@ -67,11 +79,14 @@ export function toJUnit(result: RunResult): string {
       const name = xmlEscape(`${f.title} [${f.dedupKey}]`);
       const type = xmlEscape(`${f.severity}:${f.category}`);
       const msg = xmlEscape(f.title);
-      // The [[ATTACHMENT|…]] convention surfaces screenshots in Jenkins/GitLab/
-      // CircleCI test UIs that would otherwise show text only.
+      // GitLab shows these screenshots in its test report when the job also
+      // uploads the report directory as an artifact.
       const attachments = f.artifacts
         .filter((a) => a.type === 'screenshot')
-        .map((a) => `      <system-out>[[ATTACHMENT|${xmlEscape(a.path)}]]</system-out>\n`)
+        .map(
+          (a) =>
+            `      <system-out>[[ATTACHMENT|${xmlEscape(attachmentPath(outDir, a.path))}]]</system-out>\n`,
+        )
         .join('');
       const failing = isFailingFinding(f, result.config.failOn, result.config.failOnNew ?? false);
       const outcome = failing
@@ -108,6 +123,6 @@ export function toJUnit(result: RunResult): string {
 
 export async function writeJUnitReport(result: RunResult, outDir: string): Promise<string> {
   const rel = 'junit.xml';
-  await writeFile(join(outDir, rel), toJUnit(result), 'utf8');
+  await writeFile(join(outDir, rel), toJUnit(result, outDir), 'utf8');
   return rel;
 }

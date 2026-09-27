@@ -1,6 +1,10 @@
+import { join, resolve, sep } from 'node:path';
+
 import { describe, it, expect } from 'vitest';
 import { toJUnit, xmlEscape } from '../src/report/junit';
-import type { Finding, RunResult } from '../src/core/types';
+import type { Artifact, Finding, RunResult } from '../src/core/types';
+
+const OUT = 'buttonmash-report';
 
 function baseResult(findings: Finding[]): RunResult {
   return {
@@ -62,7 +66,7 @@ describe('junit', () => {
   });
 
   it('emits a passing testcase for a clean run', () => {
-    const xml = toJUnit(baseResult([]));
+    const xml = toJUnit(baseResult([]), OUT);
     expect(xml).toContain('failures="0"');
     expect(xml).toContain('<testcase');
     expect(xml).not.toContain('<failure');
@@ -74,6 +78,7 @@ describe('junit', () => {
         finding({ dedupKey: 'aaa', title: 'Error A' }),
         finding({ dedupKey: 'bbb', title: 'Error B' }),
       ]),
+      OUT,
     );
     expect(xml).toContain('failures="2"');
     expect((xml.match(/<failure /g) ?? []).length).toBe(2);
@@ -82,7 +87,7 @@ describe('junit', () => {
   });
 
   it('escapes nasty titles instead of emitting raw markup', () => {
-    const xml = toJUnit(baseResult([finding({ title: 'bad <script> & "stuff"' })]));
+    const xml = toJUnit(baseResult([finding({ title: 'bad <script> & "stuff"' })]), OUT);
     expect(xml).toContain('&lt;script&gt;');
     expect(xml).not.toContain('<script>');
   });
@@ -94,7 +99,7 @@ describe('junit', () => {
     ]);
     result.config.failOnNew = true;
 
-    const xml = toJUnit(result);
+    const xml = toJUnit(result, OUT);
     expect(xml).toContain('failures="1"');
     expect(xml).toContain('skipped="1"');
     expect(xml).toContain('existing baseline finding');
@@ -105,7 +110,7 @@ describe('junit', () => {
     result.run.exitCode = 2;
     result.run.complete = false;
 
-    const xml = toJUnit(result);
+    const xml = toJUnit(result, OUT);
     expect(xml).toContain('tests="1" failures="1"');
     expect(xml).toContain('buttonmash tool error/incomplete run');
     expect(xml).toContain('type="buttonmash:tool-error"');
@@ -117,9 +122,30 @@ describe('junit', () => {
     result.run.exitCode = 1;
     result.run.complete = false;
 
-    const xml = toJUnit(result);
+    const xml = toJUnit(result, OUT);
     expect(xml).toContain('tests="2" failures="1" skipped="1"');
     expect(xml).toContain('type="buttonmash:incomplete-run"');
     expect(xml).toContain('existing baseline finding');
+  });
+
+  const shot: Artifact = { type: 'screenshot', path: 'artifacts/step-4.png', mime: 'image/png' };
+
+  it('writes attachment paths relative to the working directory, where GitLab resolves them', () => {
+    const result = baseResult([finding({ artifacts: [shot] })]);
+
+    expect(toJUnit(result, OUT)).toContain(
+      '<system-out>[[ATTACHMENT|buttonmash-report/artifacts/step-4.png]]</system-out>',
+    );
+    expect(toJUnit(result, join(process.cwd(), 'reports', 'chaos'))).toContain(
+      '[[ATTACHMENT|reports/chaos/artifacts/step-4.png]]',
+    );
+  });
+
+  it('writes an absolute attachment path when the report directory is outside the working directory', () => {
+    const outside = resolve(process.cwd(), '..', 'elsewhere', 'report');
+    const xml = toJUnit(baseResult([finding({ artifacts: [shot] })]), outside);
+
+    expect(xml).toContain(`[[ATTACHMENT|${outside.split(sep).join('/')}/artifacts/step-4.png]]`);
+    expect(xml).not.toContain('[[ATTACHMENT|..');
   });
 });
