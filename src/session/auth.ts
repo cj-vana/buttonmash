@@ -135,7 +135,9 @@ export async function captureAuth(url: string, outPath: string, engine: Engine):
     await waitForEnter('Press Enter to save the session… ');
     await context.storageState({ path: outPath });
     logger.success(`Saved session to ${outPath}`);
-    logger.warn('This file contains cookies/tokens. Do NOT commit it (already gitignored).');
+    logger.warn(
+      `This file holds session cookies and tokens. Add ${outPath} to your .gitignore so it is never committed.`,
+    );
     await context.close();
   } finally {
     await browser.close();
