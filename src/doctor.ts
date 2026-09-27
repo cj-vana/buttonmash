@@ -161,7 +161,12 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
         scriptOk = await performScriptedLogin(page, login, cfg.budget.actionTimeoutMs);
       }
       if (!scriptOk && !checks.some((item) => item.id === 'auth' && item.status === 'fail')) {
-        check(checks, 'auth', 'fail', 'login script could not interact with the configured form');
+        check(
+          checks,
+          'auth',
+          'fail',
+          'login script did not complete; the logged warning names the step that failed',
+        );
       }
     }
 

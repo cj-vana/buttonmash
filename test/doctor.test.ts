@@ -64,6 +64,30 @@ describe('doctor preflight', () => {
     expect(result.checks).toContainEqual(expect.objectContaining({ id: 'auth', status: 'pass' }));
   });
 
+  it('does not blame the form when only the login success condition was missed', async () => {
+    const result = await runDoctor(
+      await config(`${server.url}/app`, {
+        budget: { actionTimeoutMs: 1_000 },
+        auth: {
+          loginScript: {
+            url: '/login',
+            usernameSelector: '#user',
+            passwordSelector: '#pass',
+            submitSelector: '#go',
+            username: 'u',
+            password: 'p',
+            successUrl: '/never',
+          },
+        },
+      }),
+    );
+
+    expect(result.ok).toBe(false);
+    const auth = result.checks.find((item) => item.id === 'auth' && item.status === 'fail');
+    expect(auth?.detail).not.toContain('could not interact with the configured form');
+    expect(auth?.detail).toContain('the logged warning names the step');
+  });
+
   it('fails preflight when refuse mode sees a live billing key', async () => {
     const result = await runDoctor(await config(`${server.url}/live-billing`));
 
