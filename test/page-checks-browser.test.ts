@@ -68,6 +68,36 @@ async function runChecks(newState: boolean): Promise<void> {
 
 const isBlank = (signals: string[]) => signals.some((s) => s.startsWith('blank-screen/'));
 
+describe('framework error overlay', () => {
+  /** What Next.js 15/16 dev servers append to every page: a <nextjs-portal>
+   *  whose dev overlay lives inside an open shadow root. */
+  const nextPage = (shadowHtml: string) =>
+    '<!doctype html><main><h1>Dashboard</h1></main><nextjs-portal></nextjs-portal><script>' +
+    "document.querySelector('nextjs-portal').attachShadow({ mode: 'open' }).innerHTML = " +
+    `${JSON.stringify(shadowHtml)};</script>`;
+  const overlays = (signals: string[]) => signals.filter((s) => s.startsWith('error-overlay/'));
+
+  it('does not report the empty portal every Next.js dev page carries', async () => {
+    expect(overlays(await check(nextPage('<div data-nextjs-toast></div>')))).toEqual([]);
+  });
+
+  it('reports the error dialog inside the portal shadow root', async () => {
+    const dialog =
+      '<div data-nextjs-dialog role="dialog"><span id="nextjs__container_errors_label">' +
+      'Runtime Error</span></div>';
+    expect(overlays(await check(nextPage(dialog)))).toEqual([
+      'error-overlay/high: framework error overlay detected ([data-nextjs-dialog])',
+    ]);
+  });
+
+  it('reports the error label inside the portal shadow root', async () => {
+    const label = '<span id="nextjs__container_errors_label">Build Error</span>';
+    expect(overlays(await check(nextPage(label)))).toEqual([
+      'error-overlay/high: framework error overlay detected (#nextjs__container_errors_label)',
+    ]);
+  });
+});
+
 describe('blank screen', () => {
   it('flags an SPA whose root never rendered', async () => {
     const html =
