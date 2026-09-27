@@ -9,6 +9,7 @@ import type { ResolvedConfig } from '../config/load';
 import { anyMatch } from '../core/regex';
 import type { Severity } from '../core/types';
 import { inspectRequestForLiveMode } from '../guardrails/billing';
+import type { FenceLog } from '../guardrails/fence';
 import { redactString, scanForSecrets } from '../guardrails/secrets';
 import type { SignalRecorder } from './recorder';
 
@@ -39,6 +40,10 @@ export const DEFAULT_CONSOLE_IGNORE: string[] = [
  *  `useDefaultIgnore: false`, the same as the matching `requestfailed` event. */
 const FENCE_ABORT_CONSOLE_RE = /^Failed to load resource: net::ERR_BLOCKED_BY_CLIENT/;
 
+/** Firefox's console.error for a web font that failed to load; the URL is
+ *  compared against what the fence aborted. */
+const FONT_FAILURE_SOURCE_RE = /downloadable font: download failed .*? source: ([^\s"\]]+)/;
+
 function originOf(url: string): string {
   try {
     return new URL(url).origin;
@@ -57,10 +62,12 @@ export interface SignalDeps {
   customConsole: CustomConsoleRule[];
   /** Called when live billing mode is detected via an outbound request. */
   onBillingLive: (reasons: string[]) => void;
+  /** URLs the fence aborted; their failures are the fence's, not the app's. */
+  fenced: FenceLog;
 }
 
 export function attachSignalListeners(deps: SignalDeps): void {
-  const { page, recorder, cfg, ignore, customConsole, onBillingLive } = deps;
+  const { page, recorder, cfg, ignore, customConsole, onBillingLive, fenced } = deps;
   const redact = cfg.guardrails.secrets.redact ? redactString : (s: string) => s;
   const ignored = (text: string) => anyMatch(text, ignore);
   const allowed = new Set(cfg.guardrails.allowedOrigins);
@@ -72,6 +79,8 @@ export function attachSignalListeners(deps: SignalDeps): void {
 
     if (type === 'error' && cfg.detectors.consoleErrors) {
       if (FENCE_ABORT_CONSOLE_RE.test(text)) return;
+      const fontSource = FONT_FAILURE_SOURCE_RE.exec(text)?.[1];
+      if (fontSource && fenced.has(fontSource)) return;
       // First-party errors are high; third-party SDK noise (analytics/chat/
       // payments) is downgraded unless the user opts in.
       const src = originOf(msg.location()?.url ?? '');
@@ -109,6 +118,7 @@ export function attachSignalListeners(deps: SignalDeps): void {
   page.on('requestfailed', (req) => {
     const errorText = req.failure()?.errorText ?? 'unknown';
     // Ignore the navigations/resources WE aborted via the fence.
+    if (fenced.has(req.url())) return;
     if (/ERR_ABORTED|BLOCKED_BY_CLIENT|blockedbyclient/i.test(errorText)) return;
     if (!cfg.detectors.httpErrors) return;
     const line = `${req.method()} ${req.url()} — ${errorText}`;
