@@ -381,7 +381,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
         if (crashCount > MAX_CRASHES) {
           termination = {
             kind: 'crash-limit',
-            reason: `too many renderer crashes (${crashCount})`,
+            reason: `too many renderer crashes or hangs (${crashCount})`,
           };
           break;
         }
