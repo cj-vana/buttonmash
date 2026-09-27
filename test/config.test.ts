@@ -87,6 +87,34 @@ describe('loadConfig', () => {
     delete process.env.BM_TEST_PASS;
   });
 
+  it('refuses a ${ENV} reference to an unset variable, naming it and the field', async () => {
+    // A missing CI secret must not become an empty password or Authorization header.
+    delete process.env.BM_TEST_UNSET;
+    const loginScript = {
+      url: '/login',
+      usernameSelector: '#u',
+      passwordSelector: '#p',
+      username: 'admin',
+      password: '${BM_TEST_UNSET}',
+    };
+    for (const [overrides, field] of [
+      [{ auth: { loginScript } }, 'auth.loginScript.password'],
+      [
+        { auth: { basicAuth: { username: '${BM_TEST_UNSET}', password: 'p' } } },
+        'auth.basicAuth.username',
+      ],
+      [{ headers: { Authorization: 'Bearer ${BM_TEST_UNSET}' } }, 'headers.Authorization'],
+    ] as const) {
+      const load = loadConfig({
+        ignoreConfigFile: true,
+        overrides: { target: 'https://x.test', ...overrides },
+      });
+      await expect(load).rejects.toBeInstanceOf(ConfigError);
+      await expect(load).rejects.toThrow(/BM_TEST_UNSET/);
+      await expect(load).rejects.toThrow(field);
+    }
+  });
+
   it('resolves path-scope globs and defaults crawl on', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,
