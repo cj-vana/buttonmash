@@ -33,8 +33,25 @@ let fenced: FenceLog;
 beforeAll(async () => {
   server = createServer((req, res) => {
     hits.push(`${req.method} ${req.headers.host}${req.url} cookie=${req.headers.cookie ?? ''}`);
+    const redirect = (location: string, headers: Record<string, string> = {}) => {
+      res.writeHead(302, { location, ...headers });
+      res.end();
+    };
+    const path = (req.url ?? '/').split('?')[0];
+    if (path === '/bounce') return redirect('/logout');
+    if (path === '/redir-off') return redirect(`${offsite}/offsite`);
+    if (path === '/hop1') return redirect('/hop2');
+    if (path === '/hop2') return redirect('/home');
+    if (path === '/session' && req.method === 'POST') {
+      return redirect('/home', { 'set-cookie': 'sid=abc; Path=/; HttpOnly' });
+    }
     res.setHeader('content-type', 'text/html; charset=utf-8');
-    res.end(`<!doctype html><title>${req.url}</title><p>${req.url}</p>`);
+    // Every page pings the server from script, so a page that loaded and ran
+    // shows up in `hits` as a second request.
+    res.end(
+      `<!doctype html><title>${req.url}</title><p>${req.url}</p>` +
+        (path === '/offsite' ? "<script>fetch('/offsite-script-ran')</script>" : ''),
+    );
   });
   server.on('upgrade', (req, socket) => {
     hits.push(`UPGRADE ${req.headers.host}${req.url}`);
@@ -75,8 +92,56 @@ beforeEach(async () => {
 });
 
 const settle = () => page.waitForTimeout(400);
+/** `hits` without the cookie column: "GET 127.0.0.1:PORT/path". */
+const requested = () => hits.map((h) => h.split(' ').slice(0, 2).join(' '));
 const guardrailNotes = () =>
   recorder.signals.filter((s) => s.kind === 'guardrail').map((s) => s.detail);
+
+describe('redirects', () => {
+  it('blocks a same-origin redirect to a dangerous path', async () => {
+    await expect(page.goto(`${base}/bounce`)).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+    await settle();
+    expect(requested()).toEqual([`GET 127.0.0.1:${port}/bounce`]);
+    expect(fenced.has(`${base}/bounce`)).toBe(true);
+  });
+
+  it('blocks a redirect to an off-origin document before it loads', async () => {
+    await page.evaluate(() => {
+      location.href = '/redir-off';
+    });
+    await settle();
+    expect(requested()).toEqual([`GET 127.0.0.1:${port}/redir-off`]);
+    expect(guardrailNotes()).toEqual([]);
+  });
+
+  it('follows a login redirect that sets a cookie, and lands on its target', async () => {
+    await Promise.all([
+      page.waitForURL(`${base}/home`),
+      page.evaluate(() => {
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = '/session';
+        document.body.append(form);
+        form.submit();
+      }),
+    ]);
+    expect(hits).toEqual([
+      `POST 127.0.0.1:${port}/session cookie=`,
+      `GET 127.0.0.1:${port}/home cookie=sid=abc`,
+    ]);
+    expect((await context.cookies()).map((c) => c.name)).toEqual(['sid']);
+  });
+
+  it('lands on the last page of a safe redirect chain', async () => {
+    await page.goto(`${base}/hop1`);
+    expect(page.url()).toBe(`${base}/home`);
+    expect(requested()).toEqual([
+      `GET 127.0.0.1:${port}/hop1`,
+      `GET 127.0.0.1:${port}/hop2`,
+      `GET 127.0.0.1:${port}/home`,
+    ]);
+  });
+});
 
 describe('dangerous routes outside the pathname', () => {
   it('blocks a logout route carried in the query string (OpenCart)', async () => {
