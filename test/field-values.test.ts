@@ -113,3 +113,29 @@ describe('date-family formats', () => {
     }
   });
 });
+
+describe('retries after a rejected submit', () => {
+  const attempts = (f: FieldDescriptor) => [0, 1, 2].map((a) => valueForField('run', f, a).value);
+
+  it('send a different value on each attempt', () => {
+    for (const f of [
+      field({ kind: 'password', name: 'pw' }),
+      field({ kind: 'color', name: 'accent' }),
+      field({ kind: 'text', name: 'code', pattern: '[A-Z]{3}' }),
+    ]) {
+      expect(new Set(attempts(f)).size).toBe(3);
+    }
+  });
+
+  it('keep the first attempt unchanged, so existing seeds replay', () => {
+    const f = field({ kind: 'color', name: 'accent' });
+    expect(valueForField('run', f, 0)).toEqual(valueForField('run', f));
+  });
+
+  it('find a value that satisfies a simple pattern the semantic value missed', () => {
+    for (const pattern of ['[A-Z]{3}', '[a-z]+', '\\d{5}', '[A-Z]{2}\\d{2}']) {
+      const value = valueForField('run', field({ kind: 'text', name: 'code', pattern })).value;
+      expect(value).toMatch(new RegExp(`^(?:${pattern})$`));
+    }
+  });
+});
