@@ -296,7 +296,10 @@ export function createProgram(): Command {
       }
       writeFileSync(path, STARTER_CONFIG, 'utf8');
       logger.success(`Wrote ${path}`);
-      logger.info('Next: capture auth with `buttonmash auth <login-url>`, then `buttonmash run`.');
+      logger.info(
+        'Next: `buttonmash run`. For an app behind a login, run `buttonmash auth <login-url>` ' +
+          'first and uncomment `auth` in the config.',
+      );
       process.exit(EXIT.CLEAN);
     });
 
@@ -309,8 +312,10 @@ export default defineConfig({
   // Pin a seed in CI so failures are reproducible.
   seed: 'ci',
 
-  // An authenticated session captured with: buttonmash auth <login-url>
-  auth: { storageState: 'playwright/.auth/user.json' },
+  // For an app behind a login, save a session first with
+  //   buttonmash auth <login-url>
+  // then uncomment this line.
+  // auth: { storageState: 'playwright/.auth/user.json' },
 
   budget: { maxActions: 500, maxDurationMs: 300_000, maxPages: 100 },
 
