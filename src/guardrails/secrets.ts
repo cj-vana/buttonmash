@@ -24,6 +24,12 @@ export const SECRET_RULES: SecretRule[] = [
   { id: 'github-pat', re: /\bghp_[0-9a-zA-Z]{36}\b/g },
   { id: 'github-token', re: /\b(?:gho|ghu|ghs|ghr)_[0-9a-zA-Z]{36}\b/g },
   { id: 'gitlab-pat', re: /\bglpat-[\w-]{20}\b/g },
+  // gitleaks' routable form: these tokens run past 20 chars, where the rule
+  // above's trailing \b can never match.
+  {
+    id: 'gitlab-pat-routable',
+    re: /\bglpat-[0-9a-zA-Z_-]{27,300}\.[0-9a-z]{2}[0-9a-z]{7}\b/g,
+  },
   { id: 'slack-bot-token', re: /\bxox[baprs]-[0-9A-Za-z-]{10,}\b/g },
   {
     id: 'slack-webhook',
