@@ -1,5 +1,41 @@
 import { describe, it, expect } from 'vitest';
-import { redact, scanForSecrets } from '../src/guardrails/secrets';
+import { SECRET_RULES, redact, redactString, scanForSecrets } from '../src/guardrails/secrets';
+
+/** One fixture per rule, sized from the rule's quantifiers. */
+const FIXTURES: Record<string, string> = {
+  'stripe-secret-key': 'sk_live_' + 'a1b2c3d4e5',
+  'stripe-webhook-secret': 'whsec_' + 'a1b2c3d4e5'.repeat(2),
+  'aws-access-key-id': 'AKIA' + 'IOSFODNN7EXAMPL2',
+  'github-pat': 'ghp_' + 'a1B2'.repeat(9),
+  'github-token': 'gho_' + 'a1B2'.repeat(9),
+  'gitlab-pat': 'glpat-' + 'a1B2c'.repeat(4),
+  'gitlab-pat-routable': 'glpat-' + 'a1B2c3D4e5'.repeat(3) + '.' + '0a' + 'b1c2d3e',
+  'slack-bot-token': 'xoxb-' + '1234567890-abcdefghij',
+  'slack-webhook': 'https://hooks.slack.com/services/' + 'T0AB12CD3/B0EF45GH6/' + 'x1Y2'.repeat(6),
+  'gcp-api-key': 'AIza' + 'a1B2c'.repeat(7),
+  'openai-key': 'sk-proj-' + 'a1B2'.repeat(5) + 'T3BlbkFJ' + 'c3D4'.repeat(5),
+  'anthropic-key': 'sk-ant-api03-' + 'a1B2c3'.repeat(15) + 'd4e' + 'AA',
+  'sendgrid-key': 'SG.' + 'a1'.repeat(11) + '.' + 'b2'.repeat(21) + 'c',
+  'twilio-key': 'SK' + '0123456789abcdef'.repeat(2),
+  'shopify-token': 'shpat_' + '0123456789abcdef'.repeat(2),
+  'npm-token': 'npm_' + 'a1b2c3'.repeat(6),
+  'google-oauth': '1234567890-' + 'a1B2'.repeat(8) + '.apps.googleusercontent.com',
+  jwt: 'ey' + 'a'.repeat(17) + '.ey' + 'b'.repeat(17) + '.' + 'c'.repeat(10),
+  'private-key':
+    '-----BEGIN PRIVATE KEY-----\n' + 'MIIEow'.repeat(12) + '\n-----END PRIVATE KEY-----',
+};
+
+describe('redaction is idempotent', () => {
+  it('has a fixture for every rule', () => {
+    expect(Object.keys(FIXTURES).sort()).toEqual(SECRET_RULES.map((r) => r.id).sort());
+  });
+
+  it.each(Object.entries(FIXTURES))('%s: a second pass changes nothing', (id, secret) => {
+    const once = redact(`before ${secret} after`);
+    expect(once.redacted).toBe(`before [REDACTED:${id}] after`);
+    expect(redactString(once.redacted)).toBe(once.redacted);
+  });
+});
 
 describe('secrets', () => {
   it('redacts a Stripe secret key', () => {
