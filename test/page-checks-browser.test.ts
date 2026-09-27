@@ -68,6 +68,42 @@ async function runChecks(newState: boolean): Promise<void> {
 
 const isBlank = (signals: string[]) => signals.some((s) => s.startsWith('blank-screen/'));
 
+describe('reflected input', () => {
+  const CANARY = 'cnry1a2b3c4dzz';
+  /** fuzz.ts's reflection probe: quote and angle characters, then the canary. */
+  const PROBE = `"'<>${CANARY}`;
+  const reflections = async (html: string) => {
+    state.pendingCanaries.add(CANARY);
+    return (await check(html, true)).filter((s) => s.startsWith('reflected-input/'));
+  };
+
+  it('reports an innerHTML echo that follows an escaped attribute echo', async () => {
+    const html =
+      `<!doctype html><form><input name="q" value="${CANARY}"></form><h1 id="h"></h1>` +
+      `<script>document.getElementById('h').innerHTML = 'Results for ' + ${JSON.stringify(PROBE)};</script>`;
+    const found = await reflections(html);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(/^reflected-input\/low: input reflected into page text: /);
+    expect(found[0]).toContain(`Results for "'&lt;&gt;${CANARY}`);
+  });
+
+  it('does not call a safe textContent echo an XSS sink', async () => {
+    const html =
+      '<!doctype html><h1 id="h"></h1><script>' +
+      `document.getElementById('h').textContent = 'Results for ' + ${JSON.stringify(PROBE)};</script>`;
+    const found = await reflections(html);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(/^reflected-input\/low: /);
+    expect(found[0]).not.toMatch(/xss|sink|unencoded/i);
+  });
+
+  it('reports a plain echo in page text as low', async () => {
+    const found = await reflections(`<!doctype html><div>${CANARY}</div>`);
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(/^reflected-input\/low: /);
+  });
+});
+
 describe('framework error overlay', () => {
   /** What Next.js 15/16 dev servers append to every page: a <nextjs-portal>
    *  whose dev overlay lives inside an open shadow root. */

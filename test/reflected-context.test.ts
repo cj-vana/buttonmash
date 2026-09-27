@@ -1,5 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { isSafeReflectionContext } from '../src/detectors/page-checks';
+import { findTextReflection, isSafeReflectionContext } from '../src/detectors/page-checks';
+
+describe('findTextReflection', () => {
+  const find = (html: string) => findTextReflection(html, html.toLowerCase(), 'canary');
+
+  it('skips safe echoes and returns the first echo in page text', () => {
+    const html = '<input value="canary"><title>canary</title><p>canary</p>';
+    expect(find(html)).toBe(html.lastIndexOf('canary'));
+  });
+
+  it('returns -1 when every echo is in a safe context', () => {
+    expect(find('<input value="canary"><textarea>canary</textarea>')).toBe(-1);
+    expect(find('<p>nothing here</p>')).toBe(-1);
+  });
+});
 
 // Helper: locate the marker and assert whether its context is "safe" (not a sink).
 function safeAt(html: string, marker = 'CANARY'): boolean {

@@ -101,6 +101,57 @@ describe('page checks', () => {
     expect(page.content).not.toHaveBeenCalled();
   });
 
+  /** A new-state check over `html` with the structural probe reporting nothing. */
+  async function contentCheck(html: string): Promise<void> {
+    const page = {
+      evaluate: vi
+        .fn()
+        .mockResolvedValueOnce({ blank: false, brokenImages: [], overlay: null })
+        .mockResolvedValueOnce(''),
+      content: vi.fn().mockResolvedValue(html),
+      $$eval: vi.fn().mockResolvedValue(''),
+      url: vi.fn().mockReturnValue('https://app.test/search'),
+    } as unknown as Page;
+    await runPageChecks(
+      {
+        page,
+        recorder,
+        cfg,
+        state,
+        markBillingLive: vi.fn(),
+        customDom: [],
+        customUrl: [],
+        timeLeftMs: 10_000,
+      },
+      true,
+    );
+  }
+
+  it('checks every occurrence of a canary, not just an attribute echo that comes first', async () => {
+    await contentCheck(
+      '<form><input name="q" value="BM_CANARY"></form><h1>Results for BM_CANARY</h1>',
+    );
+    const reflected = recorder.signals.filter((s) => s.kind === 'reflected-input');
+    expect(reflected).toHaveLength(1);
+    expect(reflected[0]!.severity).toBe('low');
+    expect(reflected[0]!.detail).toContain('<h1>Results for BM_CANARY</h1>');
+    expect(state.pendingCanaries.has('BM_CANARY')).toBe(false);
+  });
+
+  it('drops a canary that only ever appears in safe contexts', async () => {
+    await contentCheck('<input value="BM_CANARY"><textarea>BM_CANARY</textarea>');
+    expect(recorder.signals.filter((s) => s.kind === 'reflected-input')).toEqual([]);
+    expect(state.pendingCanaries.has('BM_CANARY')).toBe(false);
+  });
+
+  it('keeps a secret cut by the context window out of the reflection detail', async () => {
+    const token = 'ghp_' + 'Q7w9E2r4T6y8U1i3O5p7A9s2D4f6G8h1J3k5';
+    await contentCheck(`<p>BM_CANARY</p><span data-k="${token}"></span>`);
+    const [reflected] = recorder.signals.filter((s) => s.kind === 'reflected-input');
+    expect(reflected?.detail).toBeDefined();
+    expect(reflected!.detail).not.toContain(token.slice(0, 10));
+  });
+
   it('returns cleanly when the structural probe cannot run', async () => {
     const page = {
       evaluate: vi.fn().mockRejectedValue(new Error('page navigating')),
