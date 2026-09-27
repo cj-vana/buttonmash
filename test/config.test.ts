@@ -186,6 +186,45 @@ describe('additive CLI lists and credential hygiene', () => {
   });
 });
 
+describe('trace capture', () => {
+  const load = (overrides: Record<string, unknown>) =>
+    loadConfig({ ignoreConfigFile: true, overrides: { target: 'https://x.test', ...overrides } });
+
+  it('is on by default for a run with no credentials', async () => {
+    expect((await load({})).report.captureTrace).toBe(true);
+  });
+
+  it('is off by default when the run carries credentials', async () => {
+    // Playwright traces keep request headers, cookies and filled values verbatim.
+    for (const overrides of [
+      { headers: { Authorization: 'Bearer t0ken' } },
+      { auth: { basicAuth: { username: 'u', password: 'p' } } },
+      { auth: { storageState: 'playwright/.auth/user.json' } },
+      {
+        auth: {
+          loginScript: {
+            url: '/login',
+            usernameSelector: '#u',
+            passwordSelector: '#p',
+            username: 'u',
+            password: 'p',
+          },
+        },
+      },
+    ]) {
+      expect((await load(overrides)).report.captureTrace).toBe(false);
+    }
+  });
+
+  it('stays on when asked for explicitly', async () => {
+    const cfg = await load({
+      headers: { Authorization: 'Bearer t0ken' },
+      report: { captureTrace: true },
+    });
+    expect(cfg.report.captureTrace).toBe(true);
+  });
+});
+
 describe('config files', () => {
   it("resolve `import ... from 'buttonmash'` without a local install", async () => {
     // The composite action installs buttonmash outside the workspace, so the

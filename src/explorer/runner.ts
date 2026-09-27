@@ -175,7 +175,6 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
 
   await installContextFence(context, fenceOpts, recorder);
   wirePage(page);
-  await startTracing(context, cfg);
 
   const MAX_CRASHES = 5;
   let crashCount = 0;
@@ -245,6 +244,8 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   recorder.setContext(0, cfg.target);
 
   if (cfg.auth.loginScript) await doLogin();
+  // After the login, so a trace never records the password being typed.
+  await startTracing(context, cfg);
 
   // Initial navigation (a hard failure here is critical).
   let initialLoadFailed = false;
