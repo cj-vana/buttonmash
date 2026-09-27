@@ -91,6 +91,7 @@ Requires Node 20+.
 # 1. (optional) capture an authenticated session (opens a browser, you log in)
 npx buttonmash auth https://staging.example.com/login
 #    → saves cookies/localStorage to playwright/.auth/user.json
+#      (it holds live session tokens: add playwright/.auth/ to your .gitignore)
 
 # 2. scaffold a config (optional)
 npx buttonmash init
@@ -102,19 +103,27 @@ npx buttonmash doctor https://staging.example.com --auth playwright/.auth/user.j
 # 4. run it
 npx buttonmash run https://staging.example.com --auth playwright/.auth/user.json
 
-# 5. reproduce a failure exactly (the seed is printed on every run)
-npx buttonmash run https://staging.example.com --seed <seed-from-report>
+# 5. reproduce a failure exactly: same seed, same recorded settings
+npx buttonmash replay buttonmash-report/results.json
 ```
 
 When it finishes you get a `buttonmash-report/` folder with `report.html`
 (self-contained), `results.json`, and `junit.xml`. Exit code is `1` if anything
 broke at or above your fail threshold or a safety/target condition stopped the
-run; exit code `2` means a tool error or interruption left partial results.
+run; exit code `2` means a tool or config error (an unknown flag included) or
+an interruption that left partial results.
 
 `buttonmash doctor` is a bounded preflight: it launches the configured browser,
 loads the target, verifies saved or scripted authentication, checks the final
 origin, scans for live billing evidence, and validates a configured baseline.
-It does not enter the chaos/exploration loop.
+It does not enter the chaos/exploration loop. It takes the same `--seed`,
+`--route`, `--max-actions`, `--max-duration`, `--fail-on` and `--dry-run`
+flags as `run`, so its baseline check judges the run you are about to make.
+
+`buttonmash replay` reruns a `results.json` with its seed and recorded
+settings (dry run, budget, routes, billing mode, exploration weights); flags
+you pass override them. Credentials are never stored in results.json, so pass
+`--auth` again for an authenticated replay.
 
 ## Use in CI (GitHub Actions)
 
@@ -296,7 +305,8 @@ export default defineConfig({
   // Auth: a saved session…
   auth: { storageState: 'playwright/.auth/user.json' },
   // …or a scriptable login (CI-friendly; re-authenticates if the session drops
-  // mid-run). Credentials support ${ENV_VAR} so secrets stay out of the file:
+  // mid-run). Credentials support ${ENV_VAR} so secrets stay out of the file;
+  // a variable that is unset or empty (a CI secret never added) is a config error:
   // auth: {
   //   loginScript: {
   //     url: '/login', usernameSelector: '#email', passwordSelector: '#password',
@@ -345,6 +355,12 @@ export default defineConfig({
   // baseline: { path: 'previous-results.json', failOnNew: true, identity: 'staging-admin' },
 });
 ```
+
+Every pattern field (path guards, ignore patterns, custom rules, `safeNames`,
+`auth.loginUrlPattern`) is checked when the config loads, and an invalid regex
+is a config error: silently dropping a `blockedPathPatterns` entry would remove
+a guard. `allowedOrigins` entries are reduced to their origin, so a trailing
+slash or capital letters can't make one match nothing.
 
 ### Common CLI flags
 
@@ -434,7 +450,7 @@ setup needed. Exit codes follow the pytest/ESLint convention:
 |---|---|
 | `0` | No findings at/above the fail threshold |
 | `1` | Findings at/above the threshold, or a safety/target stop (**the build-failing signal**) |
-| `2` | Tool/config error or interruption (partial run) |
+| `2` | Tool/config error (an unknown flag, an unset `${VAR}`, an invalid regex, a missing auth file) or interruption (partial run) |
 
 ## Reproducibility
 
