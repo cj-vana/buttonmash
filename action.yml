@@ -20,13 +20,13 @@ inputs:
     required: false
     default: '20'
   browser:
-    description: 'chromium | firefox | webkit'
+    description: 'Browser engine: chromium | firefox | webkit. The action installs this engine before it can read your config and passes it as --browser, so it decides the engine and overrides browser in a buttonmash config file.'
     required: false
     default: 'chromium'
   fail-on:
-    description: 'Minimum finding severity that fails the build.'
+    description: 'Minimum finding severity that fails the build: critical | high | medium | low | info. Empty uses failOn from your buttonmash config, which defaults to high; a value here overrides the config.'
     required: false
-    default: 'high'
+    default: ''
   upload-report:
     description: 'Upload the buttonmash-report/ directory as a build artifact.'
     required: false
@@ -102,11 +102,12 @@ runs:
               reject "Remove --browser (-b) from args and set the browser input instead. The action installs only the engine named by that input." ;;
           esac
         done
-        "$BM_DIR/node_modules/.bin/buttonmash" run "$BM_TARGET" \
-          --browser "$BM_BROWSER" \
-          --fail-on "$BM_FAIL_ON" \
-          --out "$GITHUB_WORKSPACE/buttonmash-report" \
-          "${BM_EXTRA[@]}"
+        BM_OPTS=(--browser "$BM_BROWSER" --out "$GITHUB_WORKSPACE/buttonmash-report")
+        # CLI flags beat the config file, so pass --fail-on only when asked to.
+        if [ -n "$BM_FAIL_ON" ]; then
+          BM_OPTS+=(--fail-on "$BM_FAIL_ON")
+        fi
+        "$BM_DIR/node_modules/.bin/buttonmash" run "$BM_TARGET" "${BM_OPTS[@]}" "${BM_EXTRA[@]}"
         CODE=$?
         echo "exit-code=$CODE" >> "$GITHUB_OUTPUT"
         echo "report-path=$GITHUB_WORKSPACE/buttonmash-report" >> "$GITHUB_OUTPUT"
