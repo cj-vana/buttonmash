@@ -1,7 +1,9 @@
 name: Release
 
-# Publishes to npm when a v* tag is pushed.
-# Requires repo secret NPM_TOKEN (an npm automation token).
+# Publishes to npm when a v* tag is pushed. npm prefers trusted publishing
+# (OIDC) when a trusted publisher for this workflow is configured on
+# npmjs.com, and falls back to the NPM_TOKEN secret otherwise. Granular
+# publish tokens expire, so check NPM_TOKEN before tagging if you use one.
 on:
   push:
     tags:
@@ -13,15 +15,19 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # trusted publishing and provenance
     steps:
       - uses: actions/checkout@v5
 
+      # Trusted publishing needs Node >= 22.14 and npm >= 11.5.1. No package
+      # cache in the publish job, as npm's trusted-publishing guide advises.
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 24
           registry-url: 'https://registry.npmjs.org'
-          cache: npm
+          package-manager-cache: false
+
+      - run: npm install --global npm@11
 
       - run: npm ci
 
