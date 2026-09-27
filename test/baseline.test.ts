@@ -173,4 +173,53 @@ describe('baseline comparison', () => {
     });
     await expect(loadBaseline(invalid)).rejects.toBeInstanceOf(BaselineError);
   });
+
+  it('names the failure for a missing or unparseable baseline file', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-baseline-'));
+    temporaryDirectories.push(directory);
+    const garbled = join(directory, 'garbled.json');
+    writeFileSync(garbled, '{ "schemaVersion": 1,');
+
+    await expect(loadBaseline(join(directory, 'absent.json'))).rejects.toThrow(
+      /Could not read baseline/,
+    );
+    await expect(loadBaseline(garbled)).rejects.toThrow(/Could not parse baseline/);
+  });
+
+  it('keys a scripted login by identity, never by its credentials', () => {
+    const withLogin = (password: string) =>
+      baselineComparisonKey({
+        auth: {
+          loginScript: { url: '/login', username: 'qa@example.test', password },
+          basicAuth: { username: 'proxy', password },
+        },
+        baseline: { identity: 'staging-qa' },
+      });
+    expect(withLogin('first-secret')).toBeDefined();
+    expect(withLogin('first-secret')).toBe(withLogin('rotated-secret'));
+  });
+
+  it('lists absent findings most severe first, then by title', () => {
+    const low = { ...summary('b-low'), severity: 'low' as const };
+    const highB = summary('b-high');
+    const highA = summary('a-high');
+    const baseline: BaselineSnapshot = {
+      source: 'previous.json',
+      findings: [low, highB, highA],
+      complete: true,
+      toolVersion: '0.2.0',
+      comparisonKey: baselineComparisonKey({ seed: 'ci' }),
+    };
+    const classified = compareWithBaseline([], baseline, {
+      currentConfig: { seed: 'ci' },
+      currentToolVersion: '0.2.0',
+      complete: true,
+    });
+
+    expect(classified.comparison.resolvedFindings.map((item) => item.dedupKey)).toEqual([
+      'a-high',
+      'b-high',
+      'b-low',
+    ]);
+  });
 });

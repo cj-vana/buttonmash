@@ -196,13 +196,7 @@ export interface Signal {
 }
 
 export type ArtifactType =
-  | 'screenshot'
-  | 'thumbnail'
-  | 'trace'
-  | 'video'
-  | 'dom'
-  | 'console'
-  | 'har';
+  'screenshot' | 'thumbnail' | 'trace' | 'video' | 'dom' | 'console' | 'har';
 
 export interface Artifact {
   type: ArtifactType;
