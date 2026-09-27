@@ -34,6 +34,11 @@ export const DEFAULT_CONSOLE_IGNORE: string[] = [
   'the server responded with a status of', // paired with the HTTP oracle
 ];
 
+/** Chromium's console echo of a request the fence aborted (a blocked font, a
+ *  logout ping). The fence is ours, so this is dropped even with
+ *  `useDefaultIgnore: false`, the same as the matching `requestfailed` event. */
+const FENCE_ABORT_CONSOLE_RE = /^Failed to load resource: net::ERR_BLOCKED_BY_CLIENT/;
+
 function originOf(url: string): string {
   try {
     return new URL(url).origin;
@@ -66,6 +71,7 @@ export function attachSignalListeners(deps: SignalDeps): void {
     if (ignored(text)) return;
 
     if (type === 'error' && cfg.detectors.consoleErrors) {
+      if (FENCE_ABORT_CONSOLE_RE.test(text)) return;
       // First-party errors are high; third-party SDK noise (analytics/chat/
       // payments) is downgraded unless the user opts in.
       const src = originOf(msg.location()?.url ?? '');
