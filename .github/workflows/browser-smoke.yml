@@ -33,7 +33,7 @@ jobs:
       - run: npx playwright install --with-deps ${{ matrix.browser }}
 
       - name: Run bounded browser smoke
-        run: npx vitest run test/browser-smoke.test.ts test/fence-noise.test.ts
+        run: npx vitest run test/browser-smoke.test.ts test/fence-noise.test.ts test/discover-visibility.test.ts
         env:
           BUTTONMASH_SMOKE_BROWSER: ${{ matrix.browser }}
           CI: 'true'

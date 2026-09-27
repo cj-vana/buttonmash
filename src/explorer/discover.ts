@@ -44,8 +44,25 @@ type RawDescriptor = Omit<ElementDescriptor, 'fp' | 'structuralFp'>;
  *  open shadow roots) can relocate them; light-DOM elements keep an nth-child path. */
 function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[] {
   const { selector, framePrefix } = arg;
+
+  /** Parent in the flat tree: across a shadow root to its host. */
+  const composedParent = (n: Element): Element | null =>
+    n.parentElement ?? (n.getRootNode() as ShadowRoot).host ?? null;
+
+  const isInert = (e: Element): boolean => {
+    for (let n: Element | null = e; n; n = composedParent(n)) {
+      if (n.hasAttribute('inert')) return true;
+    }
+    return false;
+  };
+
   const isVisible = (e: Element): boolean => {
     const el = e as HTMLElement;
+    // checkVisibility sees what the box check below misses: the contents of a
+    // closed <details> (and any content-visibility: hidden subtree) keep a
+    // layout box but are never rendered. Opacity is left unchecked on purpose:
+    // a custom checkbox is an opacity-0 input under its label.
+    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return false;
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
     return (
@@ -53,8 +70,36 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
       r.height > 0 &&
       s.visibility !== 'hidden' &&
       s.display !== 'none' &&
-      el.getAttribute('aria-hidden') !== 'true'
+      el.getAttribute('aria-hidden') !== 'true' &&
+      !isInert(el)
     );
+  };
+
+  // An open modal dialog makes the rest of the page unreachable, so only the
+  // top one's controls are offered. A native modal (showModal) sits in the top
+  // layer above any aria-modal overlay; among several of a kind, the last found
+  // stands in for the most recently opened.
+  const nativeModals: Element[] = [];
+  const ariaModals: Element[] = [];
+  const findModals = (root: Document | ShadowRoot): void => {
+    for (const el of Array.from(root.querySelectorAll('*'))) {
+      let nativeModal = false;
+      try {
+        nativeModal = el.tagName === 'DIALOG' && el.matches(':modal');
+      } catch {
+        /* :modal unsupported in this engine */
+      }
+      if (nativeModal && isVisible(el)) nativeModals.push(el);
+      else if (el.getAttribute('aria-modal') === 'true' && isVisible(el)) ariaModals.push(el);
+      if (el.shadowRoot) findModals(el.shadowRoot);
+    }
+  };
+  findModals(document);
+  const modal = nativeModals.at(-1) ?? ariaModals.at(-1) ?? null;
+  const reachable = (e: Element): boolean => {
+    if (!modal) return true;
+    for (let n: Element | null = e; n; n = composedParent(n)) if (n === modal) return true;
+    return false;
   };
 
   const structuralPath = (e: Element): string => {
@@ -157,7 +202,7 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
   let bm = w.__bmSeq ?? 0;
 
   const handle = (e: Element, inShadow: boolean): void => {
-    if (seen.has(e) || !isVisible(e)) return;
+    if (seen.has(e) || !isVisible(e) || !reachable(e)) return;
     seen.add(e);
     const el = e as HTMLElement & {
       form?: HTMLFormElement;
