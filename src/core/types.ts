@@ -51,6 +51,8 @@ export interface ElementDescriptor {
   /** URL of the same-origin iframe this element lives in (undefined = main frame).
    *  Relocation resolves the Frame and queries within it. */
   frameUrl?: string;
+  /** Index among the page's frames sharing `frameUrl` (absent = the first). */
+  frameIndex?: number;
   /** Anchor href, when present — used by the destructive-control classifier. */
   href?: string;
   /** Owning form's action target. */
@@ -119,6 +121,8 @@ export interface FieldDescriptor {
   formKey: string;
   /** Owning same-origin iframe URL, if the field lives in one. */
   frameUrl?: string;
+  /** Index among the page's frames sharing `frameUrl` (absent = the first). */
+  frameIndex?: number;
 }
 
 /** A discovered create-surface: a cluster of fields + a submit control. */
@@ -149,8 +153,11 @@ export interface LoggedAction {
   /** Value typed/selected, if any (already redacted before persistence). */
   value?: string;
   url: string;
+  /** When the action started, so signals it causes attribute to its step. */
   ts: number;
   navigated?: boolean;
+  /** Set when the action threw (timed out, covered, detached). */
+  error?: string;
   // --- set for 'submit-form' actions ---
   formKey?: string;
   fieldsFilled?: number;

@@ -4,12 +4,12 @@
  * classification), then perform it with Playwright. Mutating actions on
  * destructive controls are downgraded to a harmless hover.
  */
-import type { Page } from 'playwright';
+import type { Locator, Page } from 'playwright';
 
 import type { ResolvedConfig } from '../config/load';
 import { withDeadline } from '../core/async';
 import { normalizeUrl } from '../core/hash';
-import { compileRegexes } from '../core/regex';
+import { combineRegexes, compileRegexes } from '../core/regex';
 import type { Rng } from '../core/rng';
 import type { ActionKind, ElementDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
@@ -17,7 +17,9 @@ import type { SignalRecorder } from '../detectors/recorder';
 import { addCanary, type DetectorState } from '../detectors/page-checks';
 import { locate } from './discover';
 import { fillAndSubmit, formIsUnsafe } from './form-runner';
-import { FUZZ_KEYS, fuzzValue } from './fuzz';
+import { FUZZ_KEYS, fuzzValue, numericFuzzValue } from './fuzz';
+import { assertUncovered } from './hit-test';
+import { pathGuardReason } from './route-guard';
 
 /** Action kinds that carry a tunable weight (everything except 'submit-form',
  *  which the runner elects explicitly rather than via weighted random pick). */
@@ -126,10 +128,10 @@ const MUTATING: ReadonlySet<ActionKind> = new Set([
 export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecorder): Plan {
   const { el, kind } = plan;
 
-  // Form completion: the form-runner enforces dry-run (fills, doesn't submit),
-  // so only block here if the form itself is unsafe (payment/auth/destructive).
+  // Form completion. Filling alone can save (change handlers, autosave), so a
+  // dry run skips it entirely.
   if (kind === 'submit-form') {
-    if (!plan.form) return { kind: 'scroll' };
+    if (!plan.form || cfg.guardrails.dryRun) return { kind: 'scroll' };
     const unsafe = formIsUnsafe(plan.form, cfg);
     if (unsafe) {
       recorder.add(
@@ -159,6 +161,24 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
     }
   }
 
+  // A link into a path the user blocked. The fence stops a real navigation
+  // there, but not a hash-router or pushState route.
+  const blockedPaths = combineRegexes(compileRegexes(cfg.guardrails.blockedPathPatterns));
+  if (el?.href && blockedPaths && MUTATING.has(kind)) {
+    let dest: URL | undefined;
+    try {
+      dest = new URL(el.href, cfg.target);
+    } catch {
+      dest = undefined;
+    }
+    if (dest && pathGuardReason(dest, { blocked: blockedPaths, include: [], exclude: [] })) {
+      recorder.add('guardrail', `skipped link into a blocked path: ${el.href}`, {
+        severity: 'info',
+      });
+      return { kind: 'hover', el };
+    }
+  }
+
   if (cfg.guardrails.dryRun && MUTATING.has(kind)) {
     // In read-only mode, only allow navigating same-origin GET links via click.
     // The href must be a real navigation: `javascript:doThing()` / `#` /
@@ -173,6 +193,102 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
   }
 
   return plan;
+}
+
+/** Runs in the page: what pressing Enter in `start` (or the field focused inside
+ *  it) would submit. Null when Enter would not submit a form. */
+function implicitSubmitInfo(start: Element | null) {
+  let el = start;
+  for (let hops = 0; el && hops < 10; hops++) {
+    const inner =
+      el.tagName === 'IFRAME'
+        ? (el as HTMLIFrameElement).contentDocument?.activeElement
+        : el.shadowRoot?.activeElement;
+    if (!inner || inner === el) break;
+    el = inner;
+  }
+  const input = el as HTMLInputElement | null;
+  if (!input || input.tagName !== 'INPUT' || !input.form) return null;
+  // Enter on a button-like input activates that input, which the gate classified.
+  if (['button', 'submit', 'reset', 'image'].includes(input.type)) return null;
+  const form = input.form;
+  const submitter = Array.from(form.elements).find(
+    (c) =>
+      (c.tagName === 'BUTTON' && (c as HTMLButtonElement).type === 'submit') ||
+      (c.tagName === 'INPUT' && ['submit', 'image'].includes((c as HTMLInputElement).type)),
+  ) as HTMLButtonElement | HTMLInputElement | undefined;
+  const label = (e: Element): string =>
+    (
+      e.getAttribute('aria-label') ||
+      e.getAttribute('title') ||
+      e.textContent ||
+      (e as HTMLInputElement).value ||
+      ''
+    )
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 80);
+  return {
+    hasPassword: !!form.querySelector('input[type=password]'),
+    hasCardField: !!form.querySelector('input[autocomplete*="cc-"]'),
+    submitter: submitter
+      ? {
+          tag: submitter.tagName.toLowerCase(),
+          type: submitter.type,
+          name: label(submitter),
+          formAction: submitter.getAttribute('formaction') || form.getAttribute('action') || '',
+          formMethod: (
+            submitter.getAttribute('formmethod') ||
+            form.getAttribute('method') ||
+            ''
+          ).toUpperCase(),
+        }
+      : null,
+  };
+}
+
+/**
+ * Enter in a form field submits the form through its default button (the first
+ * submit button in tree order), a control the gate never classified. Returns
+ * why that submission would be unsafe, or null when Enter is fine. `target`
+ * null means the page's focused element.
+ */
+export async function implicitSubmitRisk(
+  ctx: ActionContext,
+  target: Locator | null,
+): Promise<string | null> {
+  const timeout = ctx.cfg.budget.interactionTimeoutMs;
+  let info: ReturnType<typeof implicitSubmitInfo>;
+  try {
+    info = target
+      ? await target.evaluate(implicitSubmitInfo, undefined, { timeout })
+      : await (
+          await ctx.page.evaluateHandle(() => document.activeElement)
+        ).evaluate(implicitSubmitInfo);
+  } catch {
+    return 'could not inspect the form';
+  }
+  if (!info) return null;
+  if (info.hasCardField) return 'payment form';
+  if (info.hasPassword && !ctx.cfg.explore.forms.submitAuthForms) return 'auth form';
+  const { destructive } = ctx.cfg.guardrails;
+  if (info.submitter && destructive.enabled && !destructive.allow) {
+    const verdict = classifyControl(
+      {
+        ...info.submitter,
+        fp: '',
+        structuralFp: '',
+        role: null,
+        editable: false,
+        path: '',
+        selector: '',
+      },
+      destructive.extraVerbs,
+      compileRegexes(destructive.safeNames),
+    );
+    if (verdict.block) return `default submit is destructive, ${verdict.reason}`;
+  }
+  return null;
 }
 
 export async function executeAction(ctx: ActionContext, plan: Plan): Promise<ActionResult> {
@@ -203,7 +319,7 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
     fp: plan.el?.fp,
   };
 
-  const loc = plan.el ? locate(page, plan.el.selector, plan.el.frameUrl) : null;
+  const loc = plan.el ? locate(page, plan.el.selector, plan.el.frameUrl, plan.el.frameIndex) : null;
 
   await withDeadline(
     (async () => {
@@ -219,22 +335,41 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
           break;
         case 'type':
           if (loc) {
-            const fv = fuzzValue(rng, ctx.runId, ctx.step);
-            result.value = fv.value.length > 60 ? `${fv.value.slice(0, 57)}…` : fv.value;
-            if (fv.probe) addCanary(ctx.state, fv.canary);
+            let text: string;
+            if (!cfg.explore.fuzzInputs) {
+              text = `buttonmash ${ctx.step}`;
+            } else if (plan.el?.tag === 'input' && plan.el.type === 'number') {
+              // A number input refuses non-numeric text outright.
+              text = numericFuzzValue(rng);
+            } else {
+              const fv = fuzzValue(rng, ctx.runId, ctx.step);
+              if (fv.probe) addCanary(ctx.state, fv.canary);
+              text = fv.value;
+            }
+            result.value = text.length > 60 ? `${text.slice(0, 57)}…` : text;
             if (plan.el?.editable) {
               // Let a failed click throw: a covered editor then gets skipped by
               // the runner instead of typed into through the layer on top.
               await loc.click({ timeout: opTimeout });
-              await loc.pressSequentially(fv.value.slice(0, 2000), { timeout: opTimeout });
+              await loc.pressSequentially(text.slice(0, 2000), { timeout: opTimeout });
             } else {
-              await loc.fill(fv.value.slice(0, 2000), { timeout: opTimeout });
+              await loc.fill(text.slice(0, 2000), { timeout: opTimeout });
             }
           }
           break;
         case 'key': {
           const key = rng.pick(FUZZ_KEYS);
           result.value = key;
+          const risk = key === 'Enter' ? await implicitSubmitRisk(ctx, loc) : null;
+          if (risk) {
+            ctx.recorder.add(
+              'guardrail',
+              `skipped Enter (${risk}): ${plan.el?.name || plan.el?.selector || 'focused field'}`,
+              { severity: 'info' },
+            );
+            result.value = `Enter (skipped: ${risk})`;
+            break;
+          }
           if (loc) await loc.press(key, { timeout: opTimeout, noWaitAfter: true });
           else await page.keyboard.press(key);
           break;
@@ -270,6 +405,9 @@ export async function executeAction(ctx: ActionContext, plan: Plan): Promise<Act
           if (loc) {
             const checked = rng.bool();
             result.value = String(checked);
+            // Forced so custom checkboxes (input hidden under its label) work;
+            // the hit test keeps the forced click off anything lying on top.
+            await assertUncovered(loc, plan.el?.name || 'checkbox', opTimeout);
             await loc.setChecked(checked, { timeout: opTimeout, force: true }).catch(() => {});
           }
           break;
