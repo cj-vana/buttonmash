@@ -90,13 +90,19 @@ export function stateFingerprint(url: string, elementFps: readonly string[]): st
   return fnv1a(normalizeUrl(url) + '#' + structural);
 }
 
+/** The reflected-input canary built in explorer/fuzz.ts and field-values.ts:
+ *  `cnry` + 8 hex chars of an fnv1a hash + `zz`. It differs per seed and step. */
+const CANARY_RE = /cnry[0-9a-f]{8}zz/gi;
+
 /**
  * Build a stable dedup key for a finding from its category, normalized
  * location, and a normalized detail signature (line numbers / addresses /
- * volatile ids stripped) so the "same bug" collapses across actions and runs.
+ * volatile ids / typed canaries stripped) so the "same bug" collapses across
+ * actions and runs.
  */
 export function findingDedupKey(category: string, url: string, signature: string): string {
   const normSig = signature
+    .replace(CANARY_RE, 'CANARY')
     // URLs embedded in messages/stack frames carry volatile hash/query state
     // (SPA `#/routes`, cache-busters) — the same error thrown from
     // `app/:24:7` and `app/#detail:24:7` is one bug, not two. Peel the stack
@@ -113,5 +119,5 @@ export function findingDedupKey(category: string, url: string, signature: string
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
-  return fnv1a([category, normalizeUrl(url), normSig].join('|'));
+  return fnv1a([category, normalizeUrl(url.replace(CANARY_RE, 'CANARY')), normSig].join('|'));
 }
