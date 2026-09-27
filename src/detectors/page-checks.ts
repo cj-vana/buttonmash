@@ -165,6 +165,18 @@ export function isSafeReflectionContext(lowerHtml: string, idx: number): boolean
   return false;
 }
 
+/**
+ * Index of the first place `canary` is echoed into page text, or -1. Every
+ * occurrence is checked: a controlled `<input value>` echo usually comes first
+ * and must not hide a later reflection into the page body.
+ */
+export function findTextReflection(html: string, lowerHtml: string, canary: string): number {
+  for (let idx = html.indexOf(canary); idx !== -1; idx = html.indexOf(canary, idx + 1)) {
+    if (!isSafeReflectionContext(lowerHtml, idx)) return idx;
+  }
+  return -1;
+}
+
 async function runAxe(deps: PageCheckDeps): Promise<void> {
   const { page, recorder } = deps;
   try {
@@ -289,31 +301,23 @@ export async function runPageChecks(deps: PageCheckDeps, newState: boolean): Pro
   }
 
   if (cfg.detectors.reflectedInput && state.pendingCanaries.size && html) {
-    const lowerHtml = html.toLowerCase();
+    // Redact the whole page before cutting context around a reflection, so a
+    // secret next to it cannot survive cut in half at the window edge.
+    const shown = cfg.guardrails.secrets.redact ? redactString(html) : html;
+    const lower = shown.toLowerCase();
     for (const canary of [...state.pendingCanaries]) {
-      const idx = html.indexOf(canary);
-      if (idx === -1) continue;
-      // Skip reflections in contexts that are NOT XSS sinks: inside an
-      // attribute/tag (e.g. a controlled <input value="…">) or inside a
-      // raw-text/RCDATA element (textarea/title/script/style). These are the
-      // dominant false-positive source — React echoing typed input.
-      if (isSafeReflectionContext(lowerHtml, idx)) {
-        state.pendingCanaries.delete(canary);
-        continue;
-      }
-      const before = html.slice(Math.max(0, idx - 25), idx);
-      const unencoded = /[<>"'][^<>]{0,20}$/.test(before);
-      const rawCtx = html.slice(Math.max(0, idx - 40), idx + canary.length + 40);
-      // Redact before persisting — a secret could be reflected next to the canary.
-      const ctx = cfg.guardrails.secrets.redact ? redactString(rawCtx) : rawCtx;
-      recorder.add(
-        'reflected-input',
-        `input reflected into page${
-          unencoded ? ' adjacent to unencoded HTML chars (possible XSS sink)' : ''
-        }: …${ctx}…`,
-        { severity: unencoded ? 'medium' : 'low' },
-      );
+      if (!shown.includes(canary)) continue;
       state.pendingCanaries.delete(canary);
+      // Echoes inside an attribute or a textarea/title/script/style are not
+      // page text (React echoing typed input into its control).
+      const idx = findTextReflection(shown, lower, canary);
+      if (idx === -1) continue;
+      // page.content() re-serializes the DOM, which escapes text either way,
+      // so it cannot tell an escaped echo from markup injected by an HTML sink.
+      const ctx = shown.slice(Math.max(0, idx - 40), idx + canary.length + 40);
+      recorder.add('reflected-input', `input reflected into page text: …${ctx}…`, {
+        severity: 'low',
+      });
     }
   }
 

@@ -43,8 +43,8 @@ const KIND_META: Record<SignalKind, KindMeta> = {
   a11y: { category: 'a11y', defaultSeverity: 'medium', label: 'Accessibility violation' },
   'reflected-input': {
     category: 'reflected-input',
-    defaultSeverity: 'medium',
-    label: 'Reflected input (possible XSS sink)',
+    defaultSeverity: 'low',
+    label: 'Reflected input',
   },
   'secret-leak': {
     category: 'secret-leak',
