@@ -94,24 +94,28 @@ export interface SecretHit {
  *  reporting it as a high-severity secret-leak reddens normal builds. */
 const REPORT_EXCLUDED = new Set(['jwt']);
 
+const PLACEHOLDER_RE = /\[REDACTED:([a-z0-9-]+)\]/g;
+
 /**
  * Find client-exposed secrets in a blob of page text. Publishable keys are
  * intentionally excluded — they belong to billing-mode detection, not leak
  * reporting.
  */
 export function scanForSecrets(text: string): SecretHit[] {
+  // Redact the whole text before cutting context windows: a neighbouring
+  // secret cut in half by a window edge no longer matches its rule.
+  const { redacted, hits: redactedCounts } = redact(text);
+  const unclaimed = { ...redactedCounts };
   const hits: SecretHit[] = [];
-  for (const { id, re } of SECRET_RULES) {
+  for (const m of redacted.matchAll(PLACEHOLDER_RE)) {
+    const id = m[1]!;
+    // More placeholders than redactions means the page itself contains one.
+    if (!unclaimed[id]) continue;
+    unclaimed[id] -= 1;
     if (REPORT_EXCLUDED.has(id)) continue;
-    // Fresh regex to avoid lastIndex state across calls on the shared /g rule.
-    const rx = new RegExp(re.source, re.flags);
-    let m: RegExpExecArray | null;
-    while ((m = rx.exec(text)) !== null) {
-      const start = Math.max(0, m.index - 24);
-      const end = Math.min(text.length, m.index + m[0].length + 24);
-      hits.push({ ruleId: id, context: redactString(text.slice(start, end)) });
-      if (m.index === rx.lastIndex) rx.lastIndex++; // guard against zero-width
-    }
+    const start = Math.max(0, m.index - 24);
+    const end = Math.min(redacted.length, m.index + m[0].length + 24);
+    hits.push({ ruleId: id, context: redacted.slice(start, end) });
   }
   return hits;
 }
