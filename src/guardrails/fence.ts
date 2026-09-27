@@ -75,6 +75,16 @@ export function isAllowedOrigin(url: string, allowed: ReadonlySet<string>): bool
   return o === '' || allowed.has(o);
 }
 
+/** A route can sit in the query as well as the pathname (OpenCart logs out at
+ *  index.php?route=account/logout). The pathname is also tested alone, so a
+ *  pattern anchored on it (^/admin$) still matches when a query is attached.
+ *  Hash-router routes never get here: no engine puts the fragment in a routed
+ *  request's URL. */
+function isDangerousRoute(u: URL, re: RegExp | null): boolean {
+  if (!re) return false;
+  return re.test(u.pathname) || re.test(u.pathname + u.search);
+}
+
 /** True when a committed URL is on an origin outside the allowed list. An
  *  opaque origin never counts: about:blank, data:, and the chrome-error://
  *  page Chromium commits after every aborted navigation (the fence's own
@@ -140,29 +150,24 @@ export async function installContextFence(
       return route.abort('blockedbyclient');
     };
     const type = req.resourceType();
-    let origin = '';
-    let host = '';
-    let pathname = '';
+    let u: URL;
     try {
-      const u = new URL(req.url());
-      origin = u.origin;
-      host = u.hostname;
-      pathname = u.pathname;
+      u = new URL(req.url());
     } catch {
       return route.continue();
     }
+    const host = u.hostname;
 
     // 1. Dangerous paths (logout/delete/cancel) — block navigations, API calls,
     //    and beacons, but NOT static asset/module loads. Otherwise a bundler
     //    serving modules from paths like /src/features/billing/* (resource type
     //    'script') would be blocked and the SPA would never mount.
-    if (!ASSET_TYPES.has(type) && opts.blockedPathRe?.test(pathname)) {
+    if (!ASSET_TYPES.has(type) && isDangerousRoute(u, opts.blockedPathRe)) {
       return block();
     }
 
     // 2. Off-origin document navigations.
-    const offOrigin = origin !== '' && !allowed.has(origin);
-    if (type === 'document' && offOrigin) return block();
+    if (type === 'document' && !allowed.has(u.origin)) return block();
 
     // 3. Payment safety: block real charges/tokenization at the network layer
     //    while still allowing test-mode/sandbox flows to be fuzzed.
