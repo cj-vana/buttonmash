@@ -83,7 +83,16 @@ npm install --save-dev buttonmash
 npx playwright install --with-deps chromium   # one-time browser install
 ```
 
-Requires Node 20+.
+Requires Node 20+. Playwright 1.65 no longer tests on Node 20, so prefer 22 or
+newer.
+
+buttonmash runs on Playwright 1.64.1 or newer, and uses your project's copy
+when that version fits. If your project pins an older Playwright, npm gives
+buttonmash a copy of its own, and a bare `npx playwright install` then
+downloads browsers for your copy instead. `buttonmash doctor` reports which
+Playwright buttonmash loads, and when its browser is missing, `doctor` and
+`run` print the command that installs it, such as
+`npx playwright@1.64.1 install --with-deps chromium`.
 
 ## Quickstart
 
@@ -140,14 +149,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.3.1
+      - uses: cj-vana/buttonmash@v0.4.0
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
 ```
 
-The action runs the buttonmash release that matches its own tag (`@v0.3.1`
-installs 0.3.1) and reads a committed `buttonmash.config.*` from the
+The action runs the buttonmash release that matches its own tag (`@v0.4.0`
+installs 0.4.0) and reads a committed `buttonmash.config.*` from the
 workspace. Its inputs:
 
 | Input | Default | What it does |
@@ -259,7 +268,8 @@ Salesforce LWC, Ionic, Shoelace/Lit/Material Web) and **same-origin iframes**
 (embedded editors, wizards), so component-based apps aren't invisible to it.
 It also skips what a user couldn't reach: the contents of a closed `<details>`,
 inert subtrees, and, while a modal dialog is open, everything outside the top
-modal.
+modal. The same holds for an iframe: nothing inside it is offered when the
+iframe is hidden, inert, or outside an open modal.
 
 It's built to survive messy real apps on long CI sweeps: it **recovers from
 renderer crashes** (recreates the page and continues, skipping the page that
@@ -338,6 +348,10 @@ export default defineConfig({
     billing: { mode: 'refuse' },   // refuse | warn | off
     // dryRun: true,                // read-only: explore without submitting
     // vetRedirects: true,          // check a page's first redirect before following it
+    // blockedRequests: [           // refuse by HTTP method, path (regex), or both
+    //   { method: 'DELETE' },
+    //   { method: 'POST', path: '^/api/admin/' },
+    // ],
     destructive: {
       enabled: true,
       extraVerbs: ['archivar'],
@@ -405,7 +419,8 @@ loops, React dev warnings, HMR…) and **downgrades third-party `console.error`*
 errors stay high (`detectors.thirdPartyConsole: true` to opt in). State dedup is
 **structural** by default, so live counters/clocks don't explode the state space
 on dynamic apps. Requests buttonmash's own fence blocks (a web font under
-`blockMedia`, a logout ping) are never reported as app errors, in any engine. A
+`blockMedia`, a logout ping) are never reported as app errors, in any engine;
+the logout ping shows up as an `info` fence finding instead (see Safety). A
 control another layer covers (a canvas, a stuck overlay) costs one timeout per
 page, not one per pick. And if CI cancels or times out mid-run (SIGINT or
 SIGTERM), a **partial report is still written** with exit code `2`, so you never
@@ -425,6 +440,19 @@ buttonmash is built to break things without breaking *you*:
   then the fence checks each page's first redirect before it is followed
   (Chromium and Firefox), at the cost of fetching every page itself, which
   buffers it and drops its `Sec-Fetch-*` headers.
+- **Fence writes by method.** `guardrails.blockedRequests` refuses requests by
+  HTTP method, path, or both, so `{ method: 'DELETE' }` stops every delete
+  while reads of the same path still load. `path` is a regex matched like a
+  `blockedPathPatterns` entry, and both parts must match when a rule has both.
+  A rule that refuses a GET also keeps the crawl and link clicks off its path.
+  Like path guards, rules never block scripts, styles, images, fonts or media.
+- **Show what the fence blocked.** Each request the fence refuses, whether by a
+  path guard, a `blockedRequests` rule or another origin, becomes an `info`
+  finding in the `fence` category: one per route (one per origin for page
+  loads), with a count. At the default `failOn` it doesn't fail the run, but it
+  shows when the fence stopped something it shouldn't have. Fonts and media
+  dropped by `blockMedia` aren't reported, and a payment provider's pages are
+  left to the billing guard.
 - **Skip destructive controls.** Buttons/links matching a multilingual verb
   list (delete, pay, logout, cancel subscription, …), or pointing at dangerous
   paths (`/logout`, `/account/delete`, `/billing/cancel`), are detected and
