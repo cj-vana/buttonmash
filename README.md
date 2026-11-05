@@ -420,7 +420,9 @@ errors stay high (`detectors.thirdPartyConsole: true` to opt in). State dedup is
 **structural** by default, so live counters/clocks don't explode the state space
 on dynamic apps. Requests buttonmash's own fence blocks (a web font under
 `blockMedia`, a logout ping) are never reported as app errors, in any engine;
-the logout ping shows up as an `info` fence finding instead (see Safety). A
+the logout ping shows up as an `info` fence finding instead (see Safety).
+Neither is a request cancelled before it finished, such as a navigation a
+double-click restarted or a fetch the page aborted. A
 control another layer covers (a canvas, a stuck overlay) costs one timeout per
 page, not one per pick. And if CI cancels or times out mid-run (SIGINT or
 SIGTERM), a **partial report is still written** with exit code `2`, so you never

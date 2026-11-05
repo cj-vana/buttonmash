@@ -119,7 +119,16 @@ export function attachSignalListeners(deps: SignalDeps): void {
     const errorText = req.failure()?.errorText ?? 'unknown';
     // Ignore the navigations/resources WE aborted via the fence.
     if (fenced.has(req.url())) return;
-    if (/ERR_ABORTED|BLOCKED_BY_CLIENT|blockedbyclient/i.test(errorText)) return;
+    // A request cancelled before it finished (a restarted navigation, an
+    // aborted fetch) did not fail: Chromium net::ERR_ABORTED, Firefox
+    // NS_BINDING_ABORTED, WebKit "cancelled".
+    if (
+      /ERR_ABORTED|NS_BINDING_ABORTED|^cancelled$|BLOCKED_BY_CLIENT|blockedbyclient/i.test(
+        errorText,
+      )
+    ) {
+      return;
+    }
     if (!cfg.detectors.httpErrors) return;
     const line = `${req.method()} ${req.url()} — ${errorText}`;
     if (ignored(line)) return;

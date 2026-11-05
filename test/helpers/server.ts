@@ -98,6 +98,14 @@ export async function startServer(): Promise<TestServer> {
       );
       return;
     }
+    // Answers late, so a page can cancel the request while it is in flight.
+    if (url === '/slow') {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('late');
+      }, 1_500);
+      return;
+    }
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
   });

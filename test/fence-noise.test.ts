@@ -14,8 +14,14 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { buttonmash } from '../src/index';
+import { chromium, firefox, webkit } from 'playwright';
+
+import { loadConfig } from '../src/config/load';
 import type { RunResult } from '../src/core/types';
+import { SignalRecorder } from '../src/detectors/recorder';
+import { attachSignalListeners } from '../src/detectors/signals';
+import { FenceLog } from '../src/guardrails/fence';
+import { buttonmash } from '../src/index';
 import type { Engine } from '../src/session/browser';
 import { startServer, type TestServer } from './helpers/server';
 
@@ -66,5 +72,45 @@ describe(`requests the fence aborts (${browser})`, () => {
   it('leave a clean page passing', () => {
     expect(result.stats.actionsTaken).toBeGreaterThan(0);
     expect(result.run.exitCode).toBe(0);
+  });
+});
+
+describe(`requests cancelled before they finish (${browser})`, () => {
+  // A double-clicked link restarts its navigation and a page can abort its own
+  // fetch. Chromium calls that net::ERR_ABORTED, Firefox NS_BINDING_ABORTED,
+  // WebKit "cancelled"; none of them is a failed request.
+  it('are not reported as failed network requests', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: { target: server.url, browser, logLevel: 'silent' },
+    });
+    const instance = await { chromium, firefox, webkit }[browser].launch();
+    try {
+      const page = await instance.newPage();
+      const recorder = new SignalRecorder();
+      const reported: string[] = [];
+      page.on('requestfailed', (req) => reported.push(req.failure()?.errorText ?? ''));
+      attachSignalListeners({
+        page,
+        recorder,
+        cfg,
+        ignore: [],
+        customConsole: [],
+        onBillingLive: () => {},
+        fenced: new FenceLog(),
+      });
+      await page.goto(`${server.url}/fonts`);
+      await page.evaluate(async () => {
+        const controller = new AbortController();
+        const pending = fetch('/slow', { signal: controller.signal }).catch(() => {});
+        setTimeout(() => controller.abort(), 200);
+        await pending;
+      });
+      await page.waitForTimeout(300);
+      expect(reported.length).toBeGreaterThan(0);
+      expect(recorder.signals.filter((s) => s.kind === 'requestfailed')).toEqual([]);
+    } finally {
+      await instance.close();
+    }
   });
 });
