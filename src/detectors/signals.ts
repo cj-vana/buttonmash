@@ -121,9 +121,10 @@ export function attachSignalListeners(deps: SignalDeps): void {
     if (fenced.has(req.url())) return;
     // A request cancelled before it finished (a restarted navigation, an
     // aborted fetch) did not fail: Chromium net::ERR_ABORTED, Firefox
-    // NS_BINDING_ABORTED, WebKit "cancelled".
+    // NS_BINDING_ABORTED, WebKit "cancelled" on macOS and "Load request
+    // cancelled" on Linux.
     if (
-      /ERR_ABORTED|NS_BINDING_ABORTED|^cancelled$|BLOCKED_BY_CLIENT|blockedbyclient/i.test(
+      /ERR_ABORTED|NS_BINDING_ABORTED|^(?:Load request )?cancelled$|BLOCKED_BY_CLIENT|blockedbyclient/i.test(
         errorText,
       )
     ) {

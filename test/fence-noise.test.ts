@@ -78,7 +78,8 @@ describe(`requests the fence aborts (${browser})`, () => {
 describe(`requests cancelled before they finish (${browser})`, () => {
   // A double-clicked link restarts its navigation and a page can abort its own
   // fetch. Chromium calls that net::ERR_ABORTED, Firefox NS_BINDING_ABORTED,
-  // WebKit "cancelled"; none of them is a failed request.
+  // WebKit "cancelled" (macOS) or "Load request cancelled" (Linux); none of
+  // them is a failed request.
   it('are not reported as failed network requests', async () => {
     const cfg = await loadConfig({
       ignoreConfigFile: true,
