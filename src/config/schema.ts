@@ -191,12 +191,34 @@ const SecretsSchema = z
   })
   .default({});
 
+/** One request the fence refuses. Both parts are optional, and when both are
+ *  given both must match: `{ method: 'DELETE' }` refuses every delete, while
+ *  `{ method: 'POST', path: '^/api/admin/' }` refuses only admin writes. */
+const BlockedRequestSchema = z
+  .object({
+    /** HTTP method, in any case. */
+    method: z
+      .string()
+      .regex(/^[A-Za-z]+$/, 'must be an HTTP method such as POST or DELETE')
+      .transform((method) => method.toUpperCase())
+      .optional(),
+    /** Regex for the path with its query, matched as blockedPathPatterns are. */
+    path: RegexSchema.optional(),
+  })
+  .refine((rule) => rule.method !== undefined || rule.path !== undefined, {
+    message: 'needs a method, a path, or both',
+  });
+
 const GuardrailsSchema = z
   .object({
     /** Origins the monkey may navigate to. Empty → just the target's origin. */
     allowedOrigins: z.array(z.string()).default([]),
     /** Extra regex strings for paths to hard-block, even on allowed origins. */
     blockedPathPatterns: z.array(RegexSchema).default([]),
+    /** Requests to refuse by HTTP method, path, or both. Unlike a blocked path,
+     *  a rule with a method leaves the path's other methods alone, so a read
+     *  of the same path still loads. */
+    blockedRequests: z.array(BlockedRequestSchema).default([]),
     /** If non-empty, only crawl paths matching one of these regexes (scope a
      *  sweep to e.g. ^/app/). */
     includePaths: z.array(RegexSchema).default([]),

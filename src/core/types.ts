@@ -186,6 +186,7 @@ export type SignalKind =
   | 'form-validation'
   | 'session-lost'
   | 'guardrail'
+  | 'fence'
   | 'custom'
   | 'driver';
 

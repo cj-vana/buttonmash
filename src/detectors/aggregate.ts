@@ -67,18 +67,21 @@ const KIND_META: Record<SignalKind, KindMeta> = {
     label: 'Session lost (logged out mid-run)',
   },
   guardrail: { category: 'guardrail', defaultSeverity: 'info', label: 'Guardrail' },
+  fence: { category: 'fence', defaultSeverity: 'info', label: 'Blocked by the fence' },
   custom: { category: 'custom', defaultSeverity: 'medium', label: 'Custom rule' },
   driver: { category: 'driver-error', defaultSeverity: 'medium', label: 'Driver error' },
 };
 
 /** Network failures are resource-scoped, not page-scoped: the same broken
  *  asset/endpoint (its URL is in the detail) referenced from ten pages is one
- *  bug, not ten findings — so these kinds drop the page URL from their key. */
+ *  bug, not ten findings, so these kinds drop the page URL from their key.
+ *  A fence block is the same: one finding per blocked route. */
 const RESOURCE_KINDS = new Set<SignalKind>([
   'http.4xx',
   'http.5xx',
   'requestfailed',
   'broken-image',
+  'fence',
 ]);
 
 /** The part of a signal's detail that identifies the bug. An axe violation's

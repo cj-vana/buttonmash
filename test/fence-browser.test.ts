@@ -9,11 +9,13 @@ import { createServer, type Server } from 'node:http';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
 import { combineRegexes } from '../src/core/regex';
+import { aggregateFindings } from '../src/detectors/aggregate';
 import { SignalRecorder } from '../src/detectors/recorder';
 import { DANGEROUS_PATH_RE } from '../src/guardrails/destructive';
 import {
   FenceLog,
   attachPageFence,
+  compileRequestRules,
   installContextFence,
   type FenceOptions,
 } from '../src/guardrails/fence';
@@ -206,6 +208,89 @@ describe('dangerous routes outside the pathname', () => {
     expect(hits.map((h) => h.split(' ')[1])).toEqual([
       `127.0.0.1:${port}/search?q=shoes&sort=price`,
     ]);
+  });
+});
+
+describe('blockedRequests', () => {
+  /** Send `method` to `path` from the page, as an app's fetch would. */
+  const send = (method: string, path: string) =>
+    page.evaluate(
+      ([m, p]) =>
+        fetch(p as string, { method: m as string }).then(
+          () => 'sent',
+          () => 'refused',
+        ),
+      [method, path],
+    );
+  const fenceNotes = () => recorder.signals.filter((s) => s.kind === 'fence').map((s) => s.detail);
+
+  it('refuses a method on a path while a read of the same path goes through', async () => {
+    await setUp({ blockedRequests: compileRequestRules([{ method: 'delete' }]) });
+    expect(await send('DELETE', '/api/workspace')).toBe('refused');
+    expect(await send('GET', '/api/workspace')).toBe('sent');
+    expect(requested()).toEqual([`GET 127.0.0.1:${port}/api/workspace`]);
+    expect(fenceNotes()).toEqual([`DELETE ${base}/api/workspace (guardrails.blockedRequests[0])`]);
+  });
+
+  it('needs both the method and the path when a rule has both', async () => {
+    await setUp({
+      blockedRequests: compileRequestRules([{ method: 'POST', path: '^/api/admin/' }]),
+    });
+    expect(await send('POST', '/api/admin/users')).toBe('refused');
+    expect(await send('GET', '/api/admin/users')).toBe('sent');
+    expect(await send('POST', '/api/notes')).toBe('sent');
+    expect(requested()).toEqual([
+      `GET 127.0.0.1:${port}/api/admin/users`,
+      `POST 127.0.0.1:${port}/api/notes`,
+    ]);
+  });
+
+  it('closes a socket whose handshake a path rule refuses', async () => {
+    await setUp({ blockedRequests: compileRequestRules([{ path: '^/live' }]) });
+    const ended = await page.evaluate(
+      (target) =>
+        new Promise<string>((resolve) => {
+          const ws = new WebSocket(target);
+          ws.onclose = (event) => resolve(`closed ${event.code}`);
+          setTimeout(() => resolve('pending'), 2_000);
+        }),
+      `ws://127.0.0.1:${port}/live`,
+    );
+    expect(ended).toBe('closed 1008');
+    await settle();
+    expect(requested()).toEqual([]);
+    expect(fenceNotes()).toEqual([
+      `WebSocket ws://127.0.0.1:${port}/live (guardrails.blockedRequests[0])`,
+    ]);
+  });
+
+  it('reports blocked paths and page loads from other origins, not media blocking', async () => {
+    await setUp({ blockMedia: true });
+    expect(await send('POST', '/logout')).toBe('refused');
+    await page.evaluate(() => new FontFace('brand', 'url(/brand.woff2)').load().catch(() => {}));
+    await expect(page.goto(`${offsite}/elsewhere`)).rejects.toThrow(/ERR_BLOCKED_BY_CLIENT/);
+    await settle();
+    expect(fenced.has(`${base}/brand.woff2`)).toBe(true);
+    expect(fenceNotes()).toEqual([
+      `POST ${base}/logout (blocked path)`,
+      `page load from ${offsite}, outside the allowed origins`,
+    ]);
+  });
+
+  it('groups blocks of one route from different pages into one finding', async () => {
+    await setUp({ blockedRequests: compileRequestRules([{ method: 'DELETE' }]) });
+    for (const from of ['/start', '/other']) {
+      await page.goto(`${base}${from}`);
+      recorder.setContext(0, page.url());
+      await send('DELETE', '/api/things/48213');
+      await send('DELETE', '/api/things/59724');
+    }
+    const findings = aggregateFindings({
+      signals: recorder.signals,
+      actions: [],
+      screenshots: new Map(),
+    });
+    expect(findings.map((f) => [f.category, f.severity, f.count])).toEqual([['fence', 'info', 4]]);
   });
 });
 

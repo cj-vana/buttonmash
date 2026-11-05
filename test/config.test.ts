@@ -177,6 +177,41 @@ describe('loadConfig', () => {
     ).rejects.toBeInstanceOf(ConfigError);
   });
 
+  it('reads blockedRequests rules and rejects one that could not block what was meant', async () => {
+    const cfg = await loadConfig({
+      ignoreConfigFile: true,
+      overrides: {
+        target: 'https://x.test',
+        guardrails: { blockedRequests: [{ method: 'delete' }, { method: 'POST', path: '^/api/' }] },
+      },
+    });
+    expect(cfg.guardrails.blockedRequests).toEqual([
+      { method: 'DELETE' },
+      { method: 'POST', path: '^/api/' },
+    ]);
+
+    const cases: [unknown, string][] = [
+      [{ method: 'DROP TABLE' }, 'guardrails.blockedRequests.0.method: must be an HTTP method'],
+      [
+        { path: 'admin (' },
+        'guardrails.blockedRequests.0.path: must be a valid regular expression',
+      ],
+      [{}, 'guardrails.blockedRequests.0: needs a method, a path, or both'],
+      [{ methods: 'DELETE' }, 'guardrails.blockedRequests.0: needs a method, a path, or both'],
+    ];
+    for (const [rule, message] of cases) {
+      const load = loadConfig({
+        ignoreConfigFile: true,
+        overrides: {
+          target: 'https://x.test',
+          guardrails: { blockedRequests: [rule as { method?: string }] },
+        },
+      });
+      await expect(load).rejects.toBeInstanceOf(ConfigError);
+      await expect(load).rejects.toThrow(message);
+    }
+  });
+
   it('rejects every invalid regex field instead of dropping the pattern', async () => {
     // A dropped blockedPathPatterns entry silently removes a safety block, and
     // an all-invalid includePaths widens the crawl to the whole site.
