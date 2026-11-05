@@ -34,9 +34,11 @@ import { DANGEROUS_PATH_RE } from '../guardrails/destructive';
 import { redactString } from '../guardrails/secrets';
 import {
   attachPageFence,
+  compileRequestRules,
   FenceLog,
   installContextFence,
   isAllowedOrigin,
+  navigationBlockedPatterns,
 } from '../guardrails/fence';
 import { launchBrowser, createDeterministicContext } from '../session/browser';
 import { performScriptedLogin, validateStorageState } from '../session/auth';
@@ -131,11 +133,20 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const customUrl = compileCustom('url');
   // Hard-block dangerous paths (logout, delete, cancel) at the route level too,
   // not just by control label — unless the user opts into destructive testing.
-  const pathRegexes = compileRegexes(cfg.guardrails.blockedPathPatterns);
-  if (cfg.guardrails.destructive.enabled && !cfg.guardrails.destructive.allow) {
-    pathRegexes.push(DANGEROUS_PATH_RE);
-  }
-  const blockedPathRe = combineRegexes(pathRegexes);
+  const dangerousPaths =
+    cfg.guardrails.destructive.enabled && !cfg.guardrails.destructive.allow
+      ? [DANGEROUS_PATH_RE]
+      : [];
+  const blockedPathRe = combineRegexes([
+    ...compileRegexes(cfg.guardrails.blockedPathPatterns),
+    ...dangerousPaths,
+  ]);
+  // The crawl also stays off paths where a blockedRequests rule refuses the
+  // page load itself. The fence keeps those rules apart, per method.
+  const navigationBlockedRe = combineRegexes([
+    ...compileRegexes(navigationBlockedPatterns(cfg.guardrails)),
+    ...dangerousPaths,
+  ]);
   const includeRe = compileRegexes(cfg.guardrails.includePaths);
   const excludeRe = compileRegexes(cfg.guardrails.excludePaths);
   const allowedSet = new Set(cfg.guardrails.allowedOrigins);
@@ -159,6 +170,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const fenceOpts = {
     allowedOrigins: cfg.guardrails.allowedOrigins,
     blockedPathRe,
+    blockedRequests: compileRequestRules(cfg.guardrails.blockedRequests),
     blockMedia: cfg.guardrails.blockMedia,
     billingMode: cfg.guardrails.billing.mode,
     isBillingLatched: () => billingLive,
@@ -212,7 +224,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   // adds same-origin links and client-side navigations as the run progresses.
   const frontier = new RouteFrontier({
     allowedOrigins: allowedSet,
-    blockedPath: blockedPathRe,
+    blockedPath: navigationBlockedRe,
     includePaths: includeRe,
     excludePaths: excludeRe,
   });
@@ -224,7 +236,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     if (configuredStarts.has(normalizeUrl(raw))) return null;
     try {
       return pathGuardReason(new URL(raw), {
-        blocked: blockedPathRe,
+        blocked: navigationBlockedRe,
         include: includeRe,
         exclude: excludeRe,
       });

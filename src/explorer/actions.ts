@@ -13,6 +13,7 @@ import { combineRegexes, compileRegexes } from '../core/regex';
 import type { Rng } from '../core/rng';
 import type { ActionKind, ElementDescriptor, FormDescriptor } from '../core/types';
 import { classifyControl } from '../guardrails/destructive';
+import { navigationBlockedPatterns } from '../guardrails/fence';
 import type { SignalRecorder } from '../detectors/recorder';
 import { addCanary, type DetectorState } from '../detectors/page-checks';
 import { locate } from './discover';
@@ -163,7 +164,7 @@ export function gatePlan(plan: Plan, cfg: ResolvedConfig, recorder: SignalRecord
 
   // A link into a path the user blocked. The fence stops a real navigation
   // there, but not a hash-router or pushState route.
-  const blockedPaths = combineRegexes(compileRegexes(cfg.guardrails.blockedPathPatterns));
+  const blockedPaths = combineRegexes(compileRegexes(navigationBlockedPatterns(cfg.guardrails)));
   if (el?.href && blockedPaths && MUTATING.has(kind)) {
     let dest: URL | undefined;
     try {

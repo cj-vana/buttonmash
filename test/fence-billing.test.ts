@@ -16,6 +16,7 @@ type Handler = (route: Route) => unknown;
 function fakeRequest(url: string, resourceType = 'script'): Request {
   return {
     url: () => url,
+    method: () => 'GET',
     resourceType: () => resourceType,
     postData: () => null,
   } as unknown as Request;

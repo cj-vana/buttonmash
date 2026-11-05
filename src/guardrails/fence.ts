@@ -43,10 +43,56 @@ export class FenceLog {
   }
 }
 
+/** A compiled `guardrails.blockedRequests` entry. */
+export interface RequestRule {
+  /** Upper-case HTTP method; undefined matches any method. */
+  method?: string;
+  /** Path regex; null matches any path. */
+  path: RegExp | null;
+}
+
+/** Compile `guardrails.blockedRequests`. The config schema has already
+ *  validated each path, so a pattern that fails here throws rather than
+ *  turning into a rule that matches every path. */
+export function compileRequestRules(
+  rules: readonly { method?: string; path?: string }[],
+): RequestRule[] {
+  return rules.map((rule) => ({
+    method: rule.method?.toUpperCase(),
+    path: rule.path === undefined ? null : new RegExp(rule.path, 'i'),
+  }));
+}
+
+/** Index of the first rule that refuses `method` to `u`, or -1. */
+export function matchRequestRule(rules: readonly RequestRule[], method: string, u: URL): number {
+  return rules.findIndex(
+    (rule) =>
+      (rule.method === undefined || rule.method === method) &&
+      (rule.path === null || isDangerousRoute(u, rule.path)),
+  );
+}
+
+/** Path patterns that keep the crawl and link clicks away from a page: every
+ *  blockedPathPatterns entry, plus the path of each blockedRequests rule that
+ *  refuses a GET, since loading a page there would only be refused. */
+export function navigationBlockedPatterns(guardrails: {
+  blockedPathPatterns: readonly string[];
+  blockedRequests: readonly { method?: string; path?: string }[];
+}): string[] {
+  const refusesGet = guardrails.blockedRequests.flatMap((rule) =>
+    rule.path !== undefined && (rule.method === undefined || rule.method.toUpperCase() === 'GET')
+      ? [rule.path]
+      : [],
+  );
+  return [...guardrails.blockedPathPatterns, ...refusesGet];
+}
+
 export interface FenceOptions {
   allowedOrigins: readonly string[];
   /** Combined dangerous-path regex (or null). */
   blockedPathRe: RegExp | null;
+  /** Compiled `guardrails.blockedRequests`. */
+  blockedRequests?: readonly RequestRule[];
   /** Block media/font requests to cut noise. Images are kept so the
    *  broken-image detector stays meaningful. */
   blockMedia: boolean;
@@ -74,7 +120,7 @@ const ASSET_TYPES = new Set(['script', 'stylesheet', 'image', 'font', 'media']);
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
 /** Why the fence refuses a request. */
-type Refusal = 'path' | 'origin' | 'live-payment' | 'latched-payment';
+type Refusal = 'request' | 'path' | 'origin' | 'live-payment' | 'latched-payment';
 
 function safeOrigin(url: string): string {
   try {
@@ -157,14 +203,24 @@ export async function installContextFence(
   });
 
   const billingSeverity = opts.billingMode === 'refuse' ? 'critical' : 'medium';
+  const requestRules = opts.blockedRequests ?? [];
 
   /** Checks 1-3, shared by a request and by a redirect it answers with. */
-  const refusal = (u: URL, type: string, postData: () => string | null): Refusal | null => {
-    // 1. Dangerous paths (logout/delete/cancel) — block navigations, API calls,
-    //    and beacons, but NOT static asset/module loads. Otherwise a bundler
-    //    serving modules from paths like /src/features/billing/* (resource type
-    //    'script') would be blocked and the SPA would never mount.
-    if (!ASSET_TYPES.has(type) && isDangerousRoute(u, opts.blockedPathRe)) return 'path';
+  const refusal = (
+    u: URL,
+    type: string,
+    method: string,
+    postData: () => string | null,
+  ): Refusal | null => {
+    // 1. Configured requests, then dangerous paths (logout/delete/cancel).
+    //    Both block navigations, API calls and beacons, but NOT static
+    //    asset/module loads. Otherwise a bundler serving modules from paths
+    //    like /src/features/billing/* (resource type 'script') would be
+    //    blocked and the SPA would never mount.
+    if (!ASSET_TYPES.has(type)) {
+      if (matchRequestRule(requestRules, method, u) !== -1) return 'request';
+      if (isDangerousRoute(u, opts.blockedPathRe)) return 'path';
+    }
 
     // 2. Off-origin document navigations.
     if (type === 'document' && !allowed.has(u.origin)) return 'origin';
@@ -176,6 +232,30 @@ export async function installContextFence(
       if (opts.isBillingLatched()) return 'latched-payment';
     }
     return null;
+  };
+
+  /** Which guard refused `method` to `u`, for the finding. */
+  const guardName = (method: string, u: URL): string => {
+    const rule = matchRequestRule(requestRules, method, u);
+    return rule === -1 ? 'blocked path' : `guardrails.blockedRequests[${rule}]`;
+  };
+
+  /**
+   * Record a refusal as an info `fence` finding, so a run shows what the fence
+   * stopped, including a block it should not have made. Findings group by
+   * route, and page loads from another origin by origin. Payment refusals,
+   * and a payment provider's pages while billing detection is on, are the
+   * billing guard's to report.
+   */
+  const report = (refused: Refusal, method: string, u: URL): void => {
+    if (refused === 'origin') {
+      if (opts.billingMode !== 'off' && isPaymentHost(u.hostname)) return;
+      recorder.add('fence', `page load from ${u.origin}, outside the allowed origins`, {
+        severity: 'info',
+      });
+    } else if (refused === 'request' || refused === 'path') {
+      recorder.add('fence', `${method} ${u.href} (${guardName(method, u)})`, { severity: 'info' });
+    }
   };
 
   /**
@@ -194,17 +274,20 @@ export async function installContextFence(
       // browser send it, as it did before this check existed.
       return route.continue().catch(() => {});
     }
-    const location = REDIRECT_STATUSES.has(response.status())
-      ? response.headers()['location']
-      : undefined;
+    const status = response.status();
+    const location = REDIRECT_STATUSES.has(status) ? response.headers()['location'] : undefined;
     const target = location ? parseUrl(location, from) : null;
-    const refused = target && refusal(target, 'document', () => null);
+    // 307 and 308 repeat the request's method; the other redirects load a page.
+    const method = status === 307 || status === 308 ? route.request().method() : 'GET';
+    const refused = target && refusal(target, 'document', method, () => null);
     if (target && refused) {
       // No request is ever made for this hop, so nothing else records it.
-      if (refused !== 'path' && refused !== 'origin') {
+      if (refused === 'live-payment' || refused === 'latched-payment') {
         recorder.add('billing-live', `blocked a redirect to a payment page on ${target.hostname}`, {
           severity: billingSeverity,
         });
+      } else {
+        report(refused, method, target);
       }
       opts.aborted?.record(route.request().url());
       return route.abort('blockedbyclient').catch(() => {});
@@ -218,12 +301,17 @@ export async function installContextFence(
     opts.vetRedirects === true && context.browser()?.browserType().name() !== 'webkit';
 
   // WebSocket handshakes never reach context.route. A socket to a dangerous
-  // path (ws://host/logout) is routed here and closed without contacting the
+  // path (ws://host/logout), or one a blockedRequests rule refuses as the GET
+  // its handshake is, is routed here and closed without contacting the
   // server; every other socket connects natively, as fetch and XHR do.
   await context.routeWebSocket(
-    (url) => isDangerousRoute(url, opts.blockedPathRe),
+    (url) =>
+      matchRequestRule(requestRules, 'GET', url) !== -1 ||
+      isDangerousRoute(url, opts.blockedPathRe),
     (ws) => {
       opts.aborted?.record(ws.url());
+      const u = new URL(ws.url());
+      recorder.add('fence', `WebSocket ${u.href} (${guardName('GET', u)})`, { severity: 'info' });
       return ws.close({ code: 1008, reason: 'blocked by buttonmash' });
     },
   );
@@ -243,7 +331,8 @@ export async function installContextFence(
       return route.continue();
     }
 
-    const refused = refusal(u, type, () => safePostData(req));
+    const method = req.method();
+    const refused = refusal(u, type, method, () => safePostData(req));
     // Live evidence carried by the request itself is recorded, and the run
     // latched, by the signal listeners' `request` handler. Only a block that
     // rests on the latch alone is recorded here, so one event is one signal.
@@ -254,7 +343,10 @@ export async function installContextFence(
         { severity: billingSeverity },
       );
     }
-    if (refused) return block();
+    if (refused) {
+      report(refused, method, u);
+      return block();
+    }
 
     // 4. Media/font noise (images kept so broken-image detection works).
     if (opts.blockMedia && (type === 'media' || type === 'font')) {
