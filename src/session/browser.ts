@@ -9,6 +9,8 @@
  * real apps (polling, spinners, timeouts); the seed already reproduces the
  * monkey's own choices, which is what matters for replaying a bug.
  */
+import { createRequire } from 'node:module';
+
 import { chromium, firefox, webkit } from 'playwright';
 import type { Browser, BrowserContext, Page } from 'playwright';
 
@@ -17,6 +19,23 @@ import type { ResolvedConfig } from '../config/load';
 
 const ENGINES = { chromium, firefox, webkit } as const;
 export type Engine = keyof typeof ENGINES;
+
+/** The Playwright this copy of buttonmash loads. A project that pins its own
+ *  Playwright can hold two copies, and a bare `npx playwright install` then
+ *  downloads browsers for the project's copy, not this one. */
+export const playwrightVersion: string = (
+  createRequire(import.meta.url)('playwright/package.json') as { version: string }
+).version;
+
+/** Installs the browser builds that {@link playwrightVersion} launches. */
+export function browserInstallCommand(engine: Engine): string {
+  return `npx playwright@${playwrightVersion} install --with-deps ${engine}`;
+}
+
+/** True when a launch failed because the engine's browser build is missing. */
+export function isMissingBrowser(message: string): boolean {
+  return /Executable doesn't exist|playwright install/i.test(message);
+}
 
 export async function launchBrowser(
   engine: Engine,

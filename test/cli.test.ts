@@ -27,11 +27,11 @@ afterAll(() => {
   for (const directory of temporaryDirectories) rmSync(directory, { recursive: true, force: true });
 });
 
-function run(args: string[], cwd = root) {
+function run(args: string[], cwd = root, env: NodeJS.ProcessEnv = {}) {
   return spawnSync(process.execPath, [cli, ...args], {
     cwd,
     encoding: 'utf8',
-    env: { ...process.env, NO_COLOR: '1' },
+    env: { ...process.env, NO_COLOR: '1', ...env },
   });
 }
 
@@ -90,6 +90,29 @@ describe('CLI contract', () => {
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('guardrails.blockedPathPatterns.0');
     }
+  });
+
+  it('names the install command for its own Playwright when the browser is missing', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-cli-'));
+    temporaryDirectories.push(directory);
+    // An empty browsers directory: every engine's build is missing.
+    const env = { PLAYWRIGHT_BROWSERS_PATH: directory };
+    const { version: playwright } = JSON.parse(
+      readFileSync(join(root, 'node_modules', 'playwright', 'package.json'), 'utf8'),
+    ) as { version: string };
+    const command = `npx playwright@${playwright} install --with-deps firefox`;
+
+    const runResult = run(['run', 'http://127.0.0.1:9', '--browser', 'firefox'], directory, env);
+    expect(runResult.status).toBe(2);
+    expect(runResult.stderr).toContain(`firefox is not installed for Playwright ${playwright}`);
+    expect(runResult.stdout).toContain(command);
+
+    const doctor = run(['doctor', 'http://127.0.0.1:9', '--browser', 'firefox'], directory, env);
+    expect(doctor.status).toBe(2);
+    expect(doctor.stdout).toContain(
+      `browser: firefox is not installed for Playwright ${playwright}`,
+    );
+    expect(doctor.stdout).toContain(command);
   });
 
   it('rejects an unknown auth --browser before creating or launching anything', () => {
