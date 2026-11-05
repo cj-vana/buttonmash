@@ -232,6 +232,15 @@ describe('blockedRequests', () => {
     expect(fenceNotes()).toEqual([`DELETE ${base}/api/workspace (guardrails.blockedRequests[0])`]);
   });
 
+  it('refuses a method the page sends in lower case', async () => {
+    // fetch() upper-cases only the standard methods, so this goes out as
+    // "patch", which servers commonly route as PATCH.
+    await setUp({ blockedRequests: compileRequestRules([{ method: 'PATCH' }]) });
+    expect(await send('patch', '/api/workspace')).toBe('refused');
+    expect(requested()).toEqual([]);
+    expect(fenceNotes()).toEqual([`patch ${base}/api/workspace (guardrails.blockedRequests[0])`]);
+  });
+
   it('needs both the method and the path when a rule has both', async () => {
     await setUp({
       blockedRequests: compileRequestRules([{ method: 'POST', path: '^/api/admin/' }]),

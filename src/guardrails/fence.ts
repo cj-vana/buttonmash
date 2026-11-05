@@ -63,11 +63,14 @@ export function compileRequestRules(
   }));
 }
 
-/** Index of the first rule that refuses `method` to `u`, or -1. */
+/** Index of the first rule that refuses `method` to `u`, or -1. The method is
+ *  compared in upper case: fetch() upper-cases only the standard methods, so a
+ *  page can send "patch", which servers commonly route as PATCH. */
 export function matchRequestRule(rules: readonly RequestRule[], method: string, u: URL): number {
+  const sent = method.toUpperCase();
   return rules.findIndex(
     (rule) =>
-      (rule.method === undefined || rule.method === method) &&
+      (rule.method === undefined || rule.method === sent) &&
       (rule.path === null || isDangerousRoute(u, rule.path)),
   );
 }
