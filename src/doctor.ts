@@ -13,10 +13,21 @@ import { combineRegexes, compileRegexes } from './core/regex';
 import { SignalRecorder } from './detectors/recorder';
 import { inspectRequestForLiveMode, scanTextForLiveMode } from './guardrails/billing';
 import { DANGEROUS_PATH_RE } from './guardrails/destructive';
-import { attachPageFence, installContextFence, isAllowedOrigin } from './guardrails/fence';
+import {
+  attachPageFence,
+  compileRequestRules,
+  installContextFence,
+  isAllowedOrigin,
+} from './guardrails/fence';
 import { redactString } from './guardrails/secrets';
 import { performScriptedLogin, validateStorageState } from './session/auth';
-import { createDeterministicContext, launchBrowser } from './session/browser';
+import {
+  browserInstallCommand,
+  createDeterministicContext,
+  isMissingBrowser,
+  launchBrowser,
+  playwrightVersion,
+} from './session/browser';
 import { version } from './version';
 
 export type DoctorStatus = 'pass' | 'warn' | 'fail';
@@ -111,9 +122,17 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
     browser = await launchBrowser(cfg.browser, true, {
       vetRedirects: cfg.guardrails.vetRedirects,
     });
-    check(checks, 'browser', 'pass', `${cfg.browser} launched successfully`);
+    check(checks, 'browser', 'pass', `${cfg.browser} launched (Playwright ${playwrightVersion})`);
   } catch (err) {
-    check(checks, 'browser', 'fail', `${cfg.browser} could not launch: ${(err as Error).message}`);
+    const message = (err as Error).message;
+    check(
+      checks,
+      'browser',
+      'fail',
+      isMissingBrowser(message)
+        ? `${cfg.browser} is not installed for Playwright ${playwrightVersion}. Run: ${browserInstallCommand(cfg.browser)}`
+        : `${cfg.browser} could not launch: ${message}`,
+    );
     return { ok: false, checks };
   }
 
@@ -144,6 +163,7 @@ export async function runDoctor(cfg: ResolvedConfig): Promise<DoctorResult> {
     const fenceOptions = {
       allowedOrigins: cfg.guardrails.allowedOrigins,
       blockedPathRe: combineRegexes(pathRegexes),
+      blockedRequests: compileRequestRules(cfg.guardrails.blockedRequests),
       blockMedia: cfg.guardrails.blockMedia,
       billingMode: cfg.guardrails.billing.mode,
       isBillingLatched: () => billingLatched,

@@ -14,7 +14,12 @@ import { runDoctor } from './doctor';
 import { runButtonmash } from './explorer/runner';
 import { writeReports } from './report';
 import { captureAuth } from './session/auth';
-import type { Engine } from './session/browser';
+import {
+  browserInstallCommand,
+  isMissingBrowser,
+  playwrightVersion,
+  type Engine,
+} from './session/browser';
 import { version } from './version';
 
 interface RunOpts {
@@ -183,6 +188,8 @@ async function doRun(
   opts: RunOpts,
   replayed: Partial<Config> = {},
 ): Promise<never> {
+  // The config file can choose the engine too, so the hint below reads it once loaded.
+  let engine: Engine = opts.browser ?? 'chromium';
   try {
     if (opts.failOn && !(opts.failOn in SEVERITY_ORDER)) {
       throw new ConfigError(`--fail-on must be one of: ${Object.keys(SEVERITY_ORDER).join(', ')}`);
@@ -194,6 +201,7 @@ async function doRun(
       // config file's lists rather than replacing them.
       append: { routes: opts.route, allowedOrigins: opts.allowOrigin },
     });
+    engine = cfg.browser;
     const { result, outDir } = await runButtonmash(cfg);
     await writeReports(result, outDir, cfg);
     printSummary(result, outDir, cfg.report.formats.includes('html'));
@@ -202,9 +210,11 @@ async function doRun(
     const message = (err as Error).message ?? String(err);
     if (err instanceof ConfigError || err instanceof BaselineError) {
       logger.error(message);
-    } else if (/Executable doesn't exist|playwright install|browserType\.launch/i.test(message)) {
-      logger.error('The browser is not installed.');
-      logger.info(`Run:  npx playwright install --with-deps ${opts.browser ?? 'chromium'}`);
+    } else if (isMissingBrowser(message)) {
+      logger.error(`${engine} is not installed for Playwright ${playwrightVersion}.`);
+      logger.info(`Run:  ${browserInstallCommand(engine)}`);
+    } else if (/browserType\.launch/.test(message)) {
+      logger.error(`${engine} could not start: ${message.split('\n')[0]}`);
     } else {
       logger.error(`buttonmash crashed: ${(err as Error).stack ?? message}`);
     }
@@ -423,6 +433,8 @@ export default defineConfig({
     // Refuse to run if LIVE Stripe/Braintree keys are detected. Use test mode!
     billing: { mode: 'refuse' },
     // dryRun: true, // read-only: explore without submitting/mutating
+    // Refuse requests by HTTP method, path (regex), or both. Reads still load.
+    // blockedRequests: [{ method: 'DELETE' }, { method: 'POST', path: '^/api/admin/' }],
     // Controls whose names only look destructive (regex), e.g. a canvas "Reset zoom".
     // destructive: { safeNames: ['^reset zoom$'] },
   },
