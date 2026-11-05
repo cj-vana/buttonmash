@@ -60,6 +60,49 @@ describe('discovery visibility', () => {
   });
 });
 
+describe('discovery in iframes', () => {
+  // Each check is one Playwright's click makes too: a control in one of these
+  // frames passes every test in its own document, and the click times out.
+  it('skips controls in an iframe the page hides', async () => {
+    expect(
+      await namesOn(
+        '<iframe style="visibility:hidden" srcdoc="<button>Hidden frame</button>"></iframe>' +
+          '<iframe srcdoc="<button>Shown frame</button>"></iframe>',
+      ),
+    ).toEqual(['Shown frame']);
+  });
+
+  it('skips controls in an inert iframe and under an inert ancestor', async () => {
+    expect(
+      await namesOn(
+        '<iframe inert srcdoc="<button>Inert frame</button>"></iframe>' +
+          '<div inert><iframe srcdoc="<button>Inert parent</button>"></iframe></div>' +
+          '<button>Awake</button>',
+      ),
+    ).toEqual(['Awake']);
+  });
+
+  it('skips a frame nested in a hidden frame', async () => {
+    expect(
+      await namesOn(
+        `<iframe style="visibility:hidden" srcdoc="<iframe srcdoc='<button>Nested</button>'></iframe>"></iframe>` +
+          '<button>Outside</button>',
+      ),
+    ).toEqual(['Outside']);
+  });
+
+  it('keeps only the frames inside an open modal dialog', async () => {
+    expect(
+      await namesOn(
+        '<iframe srcdoc="<button>Behind the dialog</button>"></iframe>' +
+          '<dialog id="d"><iframe srcdoc="<button>In the dialog</button>"></iframe></dialog>',
+        (page) =>
+          page.evaluate(() => (document.getElementById('d') as HTMLDialogElement).showModal()),
+      ),
+    ).toEqual(['In the dialog']);
+  });
+});
+
 describe('discovery under a modal dialog', () => {
   it('offers only the controls of an open aria-modal dialog', async () => {
     expect(

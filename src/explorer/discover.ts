@@ -5,7 +5,7 @@
  * contenteditable controls, filter to actionable ones, and build a stable
  * fingerprint and a locator for each.
  */
-import type { Frame, Locator, Page } from 'playwright';
+import type { ElementHandle, Frame, Locator, Page } from 'playwright';
 
 import { withDeadline } from '../core/async';
 import { elementFingerprint, structuralFingerprint } from '../core/hash';
@@ -38,11 +38,20 @@ export const INTERACTIVE_SELECTOR = [
 
 type RawDescriptor = Omit<ElementDescriptor, 'fp' | 'structuralFp'>;
 
+interface Collected {
+  items: RawDescriptor[];
+  /** For each element in `frames`, whether a user could reach the iframe. */
+  frames: boolean[];
+}
+
 /** Runs in the browser (per document/frame); returns serializable descriptors
  *  for visible controls, piercing OPEN shadow roots. Shadow-DOM elements are
  *  tagged with an ephemeral [data-bm-id] so Playwright (whose CSS engine pierces
- *  open shadow roots) can relocate them; light-DOM elements keep an nth-child path. */
-function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[] {
+ *  open shadow roots) can relocate them; light-DOM elements keep an nth-child path.
+ *  `frames` are this document's <iframe> elements: a control inside one is out
+ *  of reach when the iframe is hidden, inert, or behind a modal, however it
+ *  looks from its own document. */
+function collect(arg: { selector: string; framePrefix: string; frames: Element[] }): Collected {
   const { selector, framePrefix } = arg;
 
   /** Parent in the flat tree: across a shadow root to its host. */
@@ -302,7 +311,7 @@ function collect(arg: { selector: string; framePrefix: string }): RawDescriptor[
   };
   visit(document, false);
   w.__bmSeq = bm;
-  return out;
+  return { items: out, frames: arg.frames.map((f) => isVisible(f) && reachable(f)) };
 }
 
 /**
@@ -361,51 +370,69 @@ function frameOrigin(u: string): string {
 
 const MAX_FRAMES = 8;
 
+function frameDepth(frame: Frame): number {
+  let depth = 0;
+  for (let parent = frame.parentFrame(); parent; parent = parent.parentFrame()) depth += 1;
+  return depth;
+}
+
 export async function discoverElements(page: Page): Promise<ElementDescriptor[]> {
-  const collected: { raws: RawDescriptor[]; frameUrl?: string; frameIndex?: number }[] = [];
-
-  // Main frame.
-  try {
-    const raws = await withDeadline(
-      page.evaluate(collect, { selector: INTERACTIVE_SELECTOR, framePrefix: '' }),
-      8_000,
-      'discover',
-    );
-    collected.push({ raws });
-  } catch {
-    /* nothing from main frame this step */
-  }
-
+  const main = page.mainFrame();
   // Same-origin child frames (embedded editors/forms/dashboards). Stable order.
   const mainOrigin = frameOrigin(page.url());
   const frames = page
     .frames()
-    .filter(
-      (f) =>
-        f !== page.mainFrame() &&
-        frameOrigin(f.url()) !== '' &&
-        frameOrigin(f.url()) === mainOrigin,
-    )
+    .filter((f) => f !== main && frameOrigin(f.url()) !== '' && frameOrigin(f.url()) === mainOrigin)
     .sort((a, b) => (a.url() + a.name()).localeCompare(b.url() + b.name()))
     .slice(0, MAX_FRAMES);
-  let fi = 0;
-  for (const f of frames) {
-    fi += 1;
+  const prefixes = new Map(frames.map((f, i) => [f, `f${i + 1}`]));
+
+  // A frame is read only once the document holding its <iframe> has said a
+  // user can reach it, so parents go first. A frame under an unreachable one
+  // is unreachable too. One whose parent is never read (another origin's
+  // frame) keeps being offered.
+  const collected = new Map<Frame, RawDescriptor[]>();
+  const unreachable = new Set<Frame>();
+  for (const f of [main, ...[...frames].sort((a, b) => frameDepth(a) - frameDepth(b))]) {
+    const parent = f.parentFrame();
+    if (unreachable.has(f) || (parent && unreachable.has(parent))) {
+      unreachable.add(f);
+      continue;
+    }
+    const children = (
+      await Promise.all(
+        frames
+          .filter((c) => c.parentFrame() === f)
+          .map(async (c) => ({ frame: c, handle: await c.frameElement().catch(() => null) })),
+      )
+    ).flatMap(({ frame, handle }) => (handle ? [{ frame, handle }] : []));
     try {
-      const raws = await withDeadline(
-        f.evaluate(collect, { selector: INTERACTIVE_SELECTOR, framePrefix: `f${fi}` }),
-        5_000,
-        'discover-frame',
+      const result = await withDeadline(
+        f.evaluate(collect, {
+          selector: INTERACTIVE_SELECTOR,
+          framePrefix: prefixes.get(f) ?? '',
+          frames: children.map((c) => c.handle) as ElementHandle<Element>[],
+        }),
+        f === main ? 8_000 : 5_000,
+        f === main ? 'discover' : 'discover-frame',
       );
-      collected.push({ raws, frameUrl: f.url(), frameIndex: sameUrlIndex(page, f) });
+      collected.set(f, result.items);
+      result.frames.forEach((reachable, i) => {
+        const child = children[i]?.frame;
+        if (!reachable && child) unreachable.add(child);
+      });
     } catch {
-      /* frame detached or cross-origin race */
+      /* frame detached, or the renderer is busy this step */
+    } finally {
+      for (const { handle } of children) void handle.dispose().catch(() => {});
     }
   }
 
   const out: ElementDescriptor[] = [];
-  for (const { raws, frameUrl, frameIndex } of collected) {
-    for (const r of raws) {
+  for (const f of [main, ...frames]) {
+    const frameUrl = f === main ? undefined : f.url();
+    const frameIndex = f === main ? 0 : sameUrlIndex(page, f);
+    for (const r of collected.get(f) ?? []) {
       if (r.disabled) continue;
       out.push({
         ...r,
