@@ -312,7 +312,9 @@ describe('CLI interruption', () => {
       child.stdout.on('data', (chunk: Buffer) => {
         stdout += chunk.toString();
       });
-      const exited = new Promise<number | null>((resolve) => child.on('exit', resolve));
+      // 'close', not 'exit': the summary is the last thing printed, and 'exit'
+      // can fire before the stdout pipe has drained.
+      const exited = new Promise<number | null>((resolve) => child.on('close', resolve));
 
       // Wait until the run loop is exploring, then interrupt it.
       for (let waited = 0; !stdout.includes('Crawl:') && waited < 30_000; waited += 100) {

@@ -331,9 +331,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
 
   // Initial navigation (a hard failure here is critical).
   let initialLoadFailed = false;
-  // Set when the network refused the target (nothing listening, DNS, TLS). The
-  // browser is then showing its own error page: loading the target again gives
-  // the same answer, and Firefox's error page has a button to mash.
+  // Set when the first load failed for any reason but a timeout: most often the
+  // network refused it (nothing listening, DNS, TLS). The browser is then
+  // showing its own error page: loading the target again gives the same
+  // answer, and Firefox's error page has a button to mash.
   let unreachable: string | undefined;
   try {
     await withDeadline(
@@ -370,7 +371,9 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
           reason: `action budget reached (${cfg.budget.maxActions} actions)`,
         };
   if (unreachable && !initialLoginFailed) {
-    logger.warn(`Could not load ${cfg.target}. Is the app running and reachable from here?`);
+    logger.warn(
+      `The first load of ${cfg.target} failed. Is the app running and reachable from here?`,
+    );
   }
   const skipLoop = initialLoginFailed || unreachable !== undefined;
 

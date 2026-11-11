@@ -125,10 +125,12 @@ an interruption that left partial results.
 The summary and every report also say **why the run stopped**: the crawl ran
 out of pages, or a budget ran out first, with the number of pages still queued
 (`time budget reached (300s), 14 pages still queued` means the sweep did not
-reach the whole site, so raise the budget or scope the crawl). If nothing
-answers at the target, because the app never started or the URL is wrong, the
-run ends at once with one critical finding and `could not load the target`,
-rather than spending the budget on the browser's error page.
+reach the whole site, so raise the budget or scope the crawl). If the first
+load of the target fails outright, most often because the app never started or
+the URL is wrong, the run ends at once with one critical finding and `could
+not load the target`, rather than spending the budget on the browser's error
+page; configured `routes` are not tried either. A first load that only times
+out carries on.
 
 `buttonmash doctor` is a bounded preflight: it launches the configured browser,
 loads the target, verifies saved or scripted authentication, checks the final
