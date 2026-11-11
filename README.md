@@ -122,6 +122,14 @@ broke at or above your fail threshold or a safety/target condition stopped the
 run; exit code `2` means a tool or config error (an unknown flag included) or
 an interruption that left partial results.
 
+The summary and every report also say **why the run stopped**: the crawl ran
+out of pages, or a budget ran out first, with the number of pages still queued
+(`time budget reached (300s), 14 pages still queued` means the sweep did not
+reach the whole site, so raise the budget or scope the crawl). If nothing
+answers at the target, because the app never started or the URL is wrong, the
+run ends at once with one critical finding and `could not load the target`,
+rather than spending the budget on the browser's error page.
+
 `buttonmash doctor` is a bounded preflight: it launches the configured browser,
 loads the target, verifies saved or scripted authentication, checks the final
 origin, scans for live billing evidence, and validates a configured baseline.
@@ -486,7 +494,19 @@ Every run writes `results.json` (the source of truth). Optionally `junit.xml`
 (for GitHub code scanning; each alert is located at the page's `host/path`, with
 the full URL in its message). On GitHub Actions it additionally emits inline
 `::error` annotations for the top findings and a markdown job summary. No
-setup needed. Exit codes follow the pytest/ESLint convention:
+setup needed.
+
+The HTML report opens with the verdict and the reason for it (`FAILED`, `2
+findings at or above high`), lists the findings that fail the build apart from
+the ones that don't, and ends with the pages the run visited and how many
+actions and findings each one had. A run that was interrupted reads `ERROR`
+with partial results, not `FAILED`. In `results.json` the same facts are
+`run.stop` (`kind`, `reason`, `pagesQueued`) and `pages` (`url`, `actions`,
+`findings`); `run.stop.kind` is one of `crawl-complete`, `action-budget`,
+`time-budget`, `page-budget`, `target-unreachable`, `billing-refused`,
+`crash-limit`, `auth-failed`, `session-expired`, `aborted` or `internal-error`.
+
+Exit codes follow the pytest/ESLint convention:
 
 | Code | Meaning |
 |---|---|

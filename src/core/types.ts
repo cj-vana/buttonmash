@@ -259,6 +259,41 @@ export interface BaselineComparison {
   notObservedFindings: BaselineFindingSummary[];
 }
 
+/**
+ * Why the run ended. The first four are normal ends: the crawl ran out of
+ * site, or a budget ran out first. The rest cut the run short.
+ */
+export type StopKind =
+  | 'crawl-complete'
+  | 'action-budget'
+  | 'time-budget'
+  | 'page-budget'
+  | 'target-unreachable'
+  | 'billing-refused'
+  | 'crash-limit'
+  | 'auth-failed'
+  | 'session-expired'
+  | 'aborted'
+  | 'internal-error';
+
+export interface RunStop {
+  kind: StopKind;
+  /** One line, as printed when the run stops. */
+  reason: string;
+  /** Pages the crawl had found but not yet visited when the run ended. */
+  pagesQueued: number;
+}
+
+/** A page the run visited, in visit order. */
+export interface PageVisit {
+  /** Normalized URL: volatile query parameters and plain anchors removed. */
+  url: string;
+  /** Actions performed while on this page. */
+  actions: number;
+  /** Findings located on this page. */
+  findings: number;
+}
+
 export interface RunStats {
   actionsTaken: number;
   pagesVisited: number;
@@ -284,6 +319,8 @@ export interface RunResult {
     dryRun: boolean;
     /** Whether the configured exploration completed without an abnormal stop. */
     complete?: boolean;
+    /** Why the run ended. Absent from results written before 0.5.0. */
+    stop?: RunStop;
   };
   config: {
     seed: string;
@@ -294,6 +331,8 @@ export interface RunResult {
     failOnNew?: boolean;
   };
   stats: RunStats;
+  /** Every page the run visited. Absent from results written before 0.5.0. */
+  pages?: PageVisit[];
   actions: LoggedAction[];
   findings: Finding[];
   /** Delta against a previous results.json, when configured. */

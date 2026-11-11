@@ -127,6 +127,38 @@ describe('GitHub Actions reporting', () => {
     }
   });
 
+  it('says why the run stopped, and calls an interrupted run an error', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'buttonmash-github-'));
+    const summary = join(directory, 'summary.md');
+    vi.stubEnv('GITHUB_ACTIONS', 'true');
+    vi.stubEnv('GITHUB_STEP_SUMMARY', summary);
+    vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const interrupted = result([]);
+      delete interrupted.baseline;
+      interrupted.config.failOnNew = false;
+      interrupted.run.exitCode = 2;
+      interrupted.run.complete = false;
+      interrupted.run.stop = {
+        kind: 'aborted',
+        reason: 'aborted (received SIGINT/SIGTERM)',
+        pagesQueued: 4,
+      };
+      emitGitHub(interrupted);
+
+      const markdown = readFileSync(summary, 'utf8');
+      expect(markdown).toContain('buttonmash: ⚠️ ERROR');
+      expect(markdown).not.toContain('FAILED');
+      expect(markdown).toContain(
+        '**Stopped:** aborted \\(received SIGINT/SIGTERM\\), 4 pages still queued',
+      );
+      expect(markdown).toContain('No findings were recorded before the run stopped.');
+      expect(markdown).not.toContain('could not break anything');
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('does not emit an error annotation below the configured failure threshold', () => {
     vi.stubEnv('GITHUB_ACTIONS', 'true');
     vi.stubEnv('GITHUB_STEP_SUMMARY', '');

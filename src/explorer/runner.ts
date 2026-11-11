@@ -16,7 +16,7 @@ import { normalizeUrl, routePath, stateFingerprint } from '../core/hash';
 import { logger } from '../core/logger';
 import { compileRegexes, combineRegexes } from '../core/regex';
 import { Rng } from '../core/rng';
-import { EXIT, type LoggedAction, type RunResult } from '../core/types';
+import { EXIT, type LoggedAction, type RunResult, type StopKind } from '../core/types';
 import {
   captureScreenshot,
   ensureArtifactDir,
@@ -59,18 +59,22 @@ export interface RunButtonmashResult {
   outDir: string;
 }
 
-type TerminationKind =
-  | 'complete'
-  | 'aborted'
-  | 'billing-refused'
-  | 'crash-limit'
-  | 'auth-failed'
-  | 'session-expired'
-  | 'internal-error';
-
 interface Termination {
-  kind: TerminationKind;
+  kind: StopKind;
   reason: string;
+}
+
+/** Ends that finish the configured exploration: out of site, or out of budget. */
+const NORMAL_STOPS: ReadonlySet<StopKind> = new Set([
+  'crawl-complete',
+  'action-budget',
+  'time-budget',
+  'page-budget',
+]);
+
+/** A navigation that ran out of time, as opposed to one the network refused. */
+function isNavigationTimeout(err: unknown): boolean {
+  return err instanceof TimeoutError || err instanceof errors.TimeoutError;
 }
 
 export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashResult> {
@@ -107,6 +111,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   const state: DetectorState = { pendingCanaries: new Set(), seenBrokenImages: new Set() };
   const screenshots = new Map<number, string>();
   const actionLog: LoggedAction[] = [];
+  // Insertion order is visit order.
   const pagesVisited = new Set<string>();
 
   let billingLive = false;
@@ -326,6 +331,10 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
 
   // Initial navigation (a hard failure here is critical).
   let initialLoadFailed = false;
+  // Set when the network refused the target (nothing listening, DNS, TLS). The
+  // browser is then showing its own error page: loading the target again gives
+  // the same answer, and Firefox's error page has a button to mash.
+  let unreachable: string | undefined;
   try {
     await withDeadline(
       page.goto(cfg.target, { waitUntil: 'domcontentloaded', timeout: navTimeout }),
@@ -334,21 +343,36 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     );
   } catch (err) {
     initialLoadFailed = true;
-    recorder.add('driver', `failed to load target: ${(err as Error).message}`, {
+    const message = (err as Error).message;
+    if (!isNavigationTimeout(err)) {
+      unreachable = message.split('\n')[0]!.replace(/^page\.goto: /, '');
+    }
+    recorder.add('driver', `failed to load target: ${message}`, {
       severity: 'critical',
       url: cfg.target,
     });
   }
 
-  const crawlDone = (): string =>
-    cfg.explore.crawl ? 'crawl complete — no more pages to visit' : 'all routes swept';
+  const crawlDone = (): Termination => ({
+    kind: 'crawl-complete',
+    reason: cfg.explore.crawl ? 'crawl complete, no more pages to visit' : 'all routes swept',
+  });
 
   let depth = 0;
   let sinceNew = 0;
   let recordsCreated = 0;
   let termination: Termination = initialLoginFailed
     ? { kind: 'auth-failed', reason: 'login script could not authenticate' }
-    : { kind: 'complete', reason: 'budget exhausted' };
+    : unreachable
+      ? { kind: 'target-unreachable', reason: `could not load the target (${unreachable})` }
+      : {
+          kind: 'action-budget',
+          reason: `action budget reached (${cfg.budget.maxActions} actions)`,
+        };
+  if (unreachable && !initialLoginFailed) {
+    logger.warn(`Could not load ${cfg.target}. Is the app running and reachable from here?`);
+  }
+  const skipLoop = initialLoginFailed || unreachable !== undefined;
 
   // Graceful shutdown: on SIGINT/SIGTERM (CI cancel/timeout) flip a flag and let
   // the loop break cleanly so the report still flushes with partial findings.
@@ -360,18 +384,21 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
   process.once('SIGTERM', onSignal);
 
   try {
-    for (let i = 0; i < cfg.budget.maxActions && !initialLoginFailed; i++) {
+    for (let i = 0; i < cfg.budget.maxActions && !skipLoop; i++) {
       if (aborted) {
         termination = { kind: 'aborted', reason: 'aborted (received SIGINT/SIGTERM)' };
         break;
       }
       if (Date.now() - start > cfg.budget.maxDurationMs) {
-        termination = { kind: 'complete', reason: 'time budget reached' };
+        termination = {
+          kind: 'time-budget',
+          reason: `time budget reached (${Math.round(cfg.budget.maxDurationMs / 1000)}s)`,
+        };
         break;
       }
       if (frontier.visitedCount >= cfg.budget.maxPages) {
         termination = {
-          kind: 'complete',
+          kind: 'page-budget',
           reason: `page budget reached (${cfg.budget.maxPages} pages)`,
         };
         break;
@@ -428,7 +455,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       }
       if (depth >= cfg.budget.maxDepth || offOrigin || deadPage || saturated || guarded) {
         if (!(await moveOn())) {
-          termination = { kind: 'complete', reason: crawlDone() };
+          termination = crawlDone();
           break;
         }
         depth = 0;
@@ -520,7 +547,7 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
       const reachable = explorer.reachable(nUrl, elements);
       if (reachable.length === 0) {
         if (!(await moveOn())) {
-          termination = { kind: 'complete', reason: crawlDone() };
+          termination = crawlDone();
           break;
         }
         depth = 0;
@@ -683,10 +710,12 @@ export async function runButtonmash(cfg: ResolvedConfig): Promise<RunButtonmashR
     screenshots,
     tracePath: traceRel,
     pagesVisited: pagesVisited.size,
+    pages: [...pagesVisited],
+    stop: { ...termination, pagesQueued: frontier.queuedCount },
     statesDiscovered: explorer.statesDiscovered,
     recordsCreated,
     completion: {
-      complete: termination.kind === 'complete' && !initialLoadFailed && !aborted,
+      complete: NORMAL_STOPS.has(termination.kind) && !initialLoadFailed && !aborted,
       incompleteExitCode:
         aborted || termination.kind === 'aborted' || termination.kind === 'internal-error'
           ? EXIT.ERROR

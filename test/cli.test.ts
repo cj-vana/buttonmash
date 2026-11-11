@@ -323,6 +323,12 @@ describe('CLI interruption', () => {
 
       expect(await exited).toBe(2);
       expect(existsSync(join(out, 'results.json'))).toBe(true);
+      const partial = JSON.parse(readFileSync(join(out, 'results.json'), 'utf8')) as RunResult;
+      expect(partial.run.stop?.kind).toBe('aborted');
+      expect(stdout).toContain('Stopped: aborted (received SIGINT/SIGTERM)');
+      expect(readFileSync(join(out, 'report.html'), 'utf8')).toContain(
+        '<title>buttonmash report: ERROR</title>',
+      );
     }, 90_000);
   }
 });

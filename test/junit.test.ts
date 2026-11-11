@@ -114,6 +114,21 @@ describe('junit', () => {
     expect(xml).toContain('tests="1" failures="1"');
     expect(xml).toContain('buttonmash tool error/incomplete run');
     expect(xml).toContain('type="buttonmash:tool-error"');
+    expect(xml).not.toContain('Stopped:');
+  });
+
+  it('names what stopped an incomplete run', () => {
+    const result = baseResult([]);
+    result.run.exitCode = 1;
+    result.run.complete = false;
+    result.run.stop = {
+      kind: 'target-unreachable',
+      reason: 'could not load the target (net::ERR_CONNECTION_REFUSED)',
+      pagesQueued: 0,
+    };
+
+    const xml = toJUnit(result, OUT);
+    expect(xml).toContain('Stopped: could not load the target (net::ERR_CONNECTION_REFUSED)');
   });
 
   it('adds an incomplete-run failure alongside skipped baseline findings', () => {

@@ -27,6 +27,14 @@ export class RouteFrontier {
     return this.visited.size;
   }
 
+  /** Routes found but not yet visited. */
+  get queuedCount(): number {
+    return this.queue.filter((url) => {
+      const normalized = normalizeUrl(url);
+      return !this.visited.has(normalized) && !this.crashed.has(normalized);
+    }).length;
+  }
+
   enqueue(raw: string): void {
     let url: URL;
     try {

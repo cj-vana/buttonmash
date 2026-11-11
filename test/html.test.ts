@@ -102,6 +102,64 @@ describe('html report', () => {
     expect(html).toContain('Fixed crash');
   });
 
+  it('names the verdict, why, and what stopped the run in plain markup', () => {
+    const report = result({});
+    report.run.exitCode = 1;
+    report.run.complete = true;
+    report.run.stop = { kind: 'time-budget', reason: 'time budget reached (300s)', pagesQueued: 3 };
+    report.findings = [screenshotFinding('a', 'artifacts/none.png')];
+
+    const html = buildHtml(report, '/tmp');
+    const chrome = html.slice(0, html.indexOf('<script id="data"'));
+    expect(chrome).toContain('<title>buttonmash report: FAILED</title>');
+    expect(chrome).toContain('<span class="badge verdict failed">FAILED</span>');
+    expect(chrome).toContain('1 finding at or above high.');
+    expect(chrome).toContain('time budget reached (300s), 3 pages still queued');
+    expect(chrome).toContain('buttonmash replay results.json');
+  });
+
+  it('calls an interrupted run an error, not a failure', () => {
+    const report = result({});
+    report.run.exitCode = 2;
+    report.run.complete = false;
+    report.run.stop = { kind: 'aborted', reason: 'aborted (received SIGINT)', pagesQueued: 0 };
+
+    const html = buildHtml(report, '/tmp');
+    expect(html).toContain('<title>buttonmash report: ERROR</title>');
+    expect(html).toContain('Partial results: aborted (received SIGINT).');
+    expect(html).not.toContain('FAILED');
+  });
+
+  it('tells the client which findings fail the build', () => {
+    const report = result({});
+    report.run.exitCode = 1;
+    const low = screenshotFinding('b', 'artifacts/none.png');
+    low.severity = 'low';
+    report.findings = [screenshotFinding('a', 'artifacts/none.png'), low];
+
+    const html = buildHtml(report, '/tmp');
+    expect(html).toContain('"failing":[true,false]');
+    expect(html).toContain('"failRule":"at or above high"');
+    expect(html).toContain('"passRule":"below high"');
+  });
+
+  it('still renders a results.json written before run.stop and pages existed', () => {
+    const report = result({});
+    expect(report.run.stop).toBeUndefined();
+    expect(report.pages).toBeUndefined();
+
+    const html = buildHtml(report, '/tmp');
+    expect(html).toContain('<title>buttonmash report: PASSED</title>');
+    expect(html).not.toContain('<dt>Stopped</dt>');
+    expect(html).toContain('"queuedNote":""');
+  });
+
+  it('keeps em and en dashes out of the page chrome', () => {
+    const html = buildHtml(result({}), '/tmp');
+    const dashes = new RegExp('[' + String.fromCodePoint(0x2013, 0x2014) + ']');
+    expect(dashes.test(html)).toBe(false);
+  });
+
   it('inlines a screenshot shared by several findings once', () => {
     const outDir = mkdtempSync(join(tmpdir(), 'buttonmash-html-'));
     try {

@@ -87,6 +87,43 @@ describe('run result finalization', () => {
     expect(cfg.auth.loginScript?.password).toBe('secret');
   });
 
+  it('records why the run stopped and what each visited page saw', () => {
+    const at = Date.now();
+    const signal: Signal = { kind: 'pageerror', detail: 'boom', url: 'https://app.test/b', at };
+    const action = (step: number, url: string) => ({
+      step,
+      kind: 'click' as const,
+      stateHash: 's',
+      url,
+      ts: at,
+    });
+    const stop = {
+      kind: 'time-budget' as const,
+      reason: 'time budget reached (5s)',
+      pagesQueued: 2,
+    };
+    const result = finalizeRun(
+      input({
+        signals: [signal],
+        // An anchor and a cache-buster are the same page as far as the crawl goes.
+        actions: [
+          action(0, 'https://app.test/a'),
+          action(1, 'https://app.test/a#top'),
+          action(2, 'https://app.test/b?_=1'),
+        ],
+        pages: ['https://app.test/a', 'https://app.test/b', 'https://app.test/c'],
+        stop,
+      }),
+    );
+
+    expect(result.run.stop).toEqual(stop);
+    expect(result.pages).toEqual([
+      { url: 'https://app.test/a', actions: 2, findings: 0 },
+      { url: 'https://app.test/b', actions: 1, findings: 1 },
+      { url: 'https://app.test/c', actions: 0, findings: 0 },
+    ]);
+  });
+
   it('marks abnormal truncation incomplete and returns the tool-error exit code', () => {
     const result = finalizeRun(
       input({

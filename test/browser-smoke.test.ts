@@ -50,5 +50,32 @@ describe.skipIf(!browser)('cross-browser runner smoke', () => {
     expect(result.stats.actionsTaken).toBeGreaterThan(0);
     expect(result.actions.every((action) => action.url.startsWith(server.url))).toBe(true);
     expect(existsSync(join(outDir, 'results.json'))).toBe(true);
+    expect(result.run.stop?.kind).toMatch(/^(crawl-complete|action-budget|time-budget)$/);
   });
+
+  // Each engine words a refused connection differently, and Firefox shows an
+  // error page with a button on it, which the run used to mash.
+  it('stops at once when nothing is listening on the target', async () => {
+    const port = Number(new URL(server.url).port);
+    await server.close();
+    const dead = await buttonmash({
+      target: `http://127.0.0.1:${port}/`,
+      browser,
+      seed: `${browser}-unreachable`,
+      headless: true,
+      logLevel: 'silent',
+      budget: { maxActions: 12, maxDurationMs: 30_000, throttleMs: 0 },
+      report: {
+        outDir,
+        formats: ['json'],
+        github: false,
+        captureScreenshots: false,
+        captureTrace: false,
+      },
+    });
+    expect(dead.run.stop?.kind).toBe('target-unreachable');
+    expect(dead.run.exitCode).toBe(1);
+    expect(dead.actions).toEqual([]);
+    expect(dead.findings.filter((f) => f.category === 'driver-error')).toHaveLength(1);
+  }, 60_000);
 });

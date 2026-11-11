@@ -65,7 +65,8 @@ export function toJUnit(result: RunResult, outDir: string): string {
     cases.push(
       `    <testcase name="buttonmash tool error/incomplete run" classname="buttonmash" time="${(result.run.durationMs / 1000).toFixed(3)}">\n` +
         `      <failure message="${xmlEscape(message)}" type="${failureType}">${xmlEscape(
-          `Target: ${result.run.target}\nSeed: ${result.config.seed}\nComplete: ${String(result.run.complete === true)}`,
+          `Target: ${result.run.target}\nSeed: ${result.config.seed}\nComplete: ${String(result.run.complete === true)}` +
+            (result.run.stop ? `\nStopped: ${result.run.stop.reason}` : ''),
         )}</failure>\n` +
         `    </testcase>`,
     );

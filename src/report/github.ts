@@ -6,6 +6,7 @@ import { appendFileSync } from 'node:fs';
 
 import { isFailingFinding } from '../baseline';
 import { SEVERITY_ORDER, type RunResult, type Severity } from '../core/types';
+import { stopSummary, verdictOf } from './verdict';
 
 /** Escape annotation message data (%/CR/LF). */
 function enc(s: string): string {
@@ -52,7 +53,10 @@ export function emitGitHub(result: RunResult): void {
   if (!summaryPath) return;
 
   const f = result.stats.findingsBySeverity;
-  const verdict = result.run.exitCode === 0 ? '✅ PASSED' : '❌ FAILED';
+  const outcome = verdictOf(result);
+  const mark = { passed: '✅', failed: '❌', error: '⚠️' }[outcome.state];
+  const verdict = `${mark} ${outcome.label}`;
+  const stop = result.run.stop;
   // Titles and URLs come from the page. Truncate BEFORE escaping (a cut
   // mid-escape leaves a dangling backslash), fold line breaks that would end the
   // row, and escape what markdown or HTML would act on: `|` splits the cell,
@@ -84,14 +88,18 @@ export function emitGitHub(result: RunResult): void {
     : '| Severity | Finding | Count | Where |\n|---|---|---|---|';
 
   const md =
-    `## 🐒 buttonmash — ${verdict}\n\n` +
+    `## 🐒 buttonmash: ${verdict}\n\n` +
+    `${cell(outcome.detail, 300)}.\n\n` +
+    (stop ? `**Stopped:** ${cell(stopSummary(stop), 300)}\n\n` : '') +
     `**Seed:** \`${result.config.seed}\` · **Actions:** ${result.stats.actionsTaken} · ` +
     `**Pages:** ${result.stats.pagesVisited} · **States:** ${result.stats.statesDiscovered}\n\n` +
     `**Findings:** ${f.critical} critical · ${f.high} high · ${f.medium} medium · ${f.low} low · ${f.info} info\n\n` +
     delta +
     (result.findings.length
       ? `${tableHeader}\n${rows}\n`
-      : `No findings — the monkey could not break anything. 🎉\n`);
+      : outcome.state === 'passed'
+        ? `No findings. The monkey could not break anything. 🎉\n`
+        : `No findings were recorded before the run stopped.\n`);
 
   try {
     appendFileSync(summaryPath, md);

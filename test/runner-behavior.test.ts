@@ -34,7 +34,32 @@ const PAGES: Record<string, string> = {
   '/token-dialog': `<button onclick="alert('deploy token ${GITHUB_TOKEN}')">Show token</button>`,
   '/live':
     '<button>Refresh</button><script>new WebSocket("ws://" + location.host + "/feed")</script>',
+  '/hub': '<a href="/leaf">Leaf</a><a href="/leaf-two">Second leaf</a><button>Stay</button>',
+  '/leaf': '<button>One</button>',
 };
+
+const HOVER_ONLY = {
+  click: 0,
+  dblclick: 0,
+  type: 0,
+  key: 0,
+  hover: 100,
+  scroll: 0,
+  select: 0,
+  check: 0,
+  back: 0,
+  forward: 0,
+  resize: 0,
+};
+
+/** A localhost port nothing listens on. */
+async function closedPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+  const addr = probe.address();
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return typeof addr === 'object' && addr ? addr.port : 0;
+}
 
 let server: Server;
 let base: string;
@@ -69,7 +94,7 @@ function run(path: string, config: Config = {}) {
   const outDir = mkdtempSync(join(tmpdir(), 'buttonmash-runner-'));
   outDirs.push(outDir);
   return buttonmash({
-    target: base + path,
+    target: path.startsWith('http') ? path : base + path,
     seed: 'runner',
     headless: true,
     logLevel: 'silent',
@@ -183,5 +208,49 @@ describe('a page whose load event never fires', () => {
     });
     expect(result.actions.length).toBeGreaterThan(4);
     expect(Date.now() - started).toBeLessThan(15_000);
+  }, 60_000);
+});
+
+describe('a target that is not running', () => {
+  it('ends the run at once and says why, instead of loading it again', async () => {
+    const target = `http://127.0.0.1:${await closedPort()}/`;
+    const result = await run(target, { explore: { crawl: true } });
+    expect(result.run.stop?.kind).toBe('target-unreachable');
+    expect(result.run.stop?.reason).toBe(
+      `could not load the target (net::ERR_CONNECTION_REFUSED at ${target})`,
+    );
+    expect(result.run.exitCode).toBe(1);
+    expect(result.run.complete).toBe(false);
+    expect(result.actions).toEqual([]);
+    expect(result.pages).toEqual([]);
+    expect(result.stats.pagesVisited).toBe(0);
+    const driver = result.findings.filter((f) => f.category === 'driver-error');
+    expect(driver.map((f) => [f.severity, f.count])).toEqual([['critical', 1]]);
+  }, 60_000);
+});
+
+describe('the reason a run stopped', () => {
+  it('names the action budget and counts the pages still queued', async () => {
+    const result = await run('/hub', {
+      explore: { crawl: true, weights: HOVER_ONLY },
+      budget: { maxActions: 2 },
+    });
+    expect(result.run.stop).toEqual({
+      kind: 'action-budget',
+      reason: 'action budget reached (2 actions)',
+      pagesQueued: 2,
+    });
+    expect(result.run.complete).toBe(true);
+    expect(result.pages).toEqual([{ url: `${base}/hub`, actions: 2, findings: 0 }]);
+  }, 60_000);
+
+  it('names a sweep that ran out of pages', async () => {
+    const result = await run('/leaf', {
+      explore: { weights: HOVER_ONLY },
+      budget: { maxActions: 400, saturationLimit: 3 },
+    });
+    expect(result.run.stop?.kind).toBe('crawl-complete');
+    expect(result.run.stop?.pagesQueued).toBe(0);
+    expect(result.stats.actionsTaken).toBeLessThan(400);
   }, 60_000);
 });

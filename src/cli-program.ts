@@ -13,6 +13,7 @@ import { EXIT, SEVERITY_ORDER, type RunResult } from './core/types';
 import { runDoctor } from './doctor';
 import { runButtonmash } from './explorer/runner';
 import { writeReports } from './report';
+import { stopSummary } from './report/verdict';
 import { captureAuth } from './session/auth';
 import {
   browserInstallCommand,
@@ -164,6 +165,7 @@ function printSummary(result: RunResult, outDir: string, htmlReport: boolean): v
   console.log(
     `  ${result.stats.actionsTaken} actions · ${result.stats.pagesVisited} pages · ${result.stats.statesDiscovered} states · ${(result.run.durationMs / 1000).toFixed(1)}s`,
   );
+  if (result.run.stop) console.log(`  Stopped: ${stopSummary(result.run.stop)}`);
   const parts = (['critical', 'high', 'medium', 'low', 'info'] as const)
     .filter((s) => f[s] > 0)
     .map((s) => `${f[s]} ${s}`);

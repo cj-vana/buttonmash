@@ -32,6 +32,21 @@ describe('route frontier', () => {
     expect(frontier.visitedCount).toBe(1);
   });
 
+  it('counts the routes it found but has not visited', async () => {
+    const frontier = makeFrontier();
+    frontier.enqueue('https://app.test/a');
+    frontier.enqueue('https://app.test/b');
+    frontier.enqueue('https://app.test/c');
+    expect(frontier.queuedCount).toBe(3);
+
+    await frontier.visitNext(async () => {});
+    expect(frontier.queuedCount).toBe(2);
+    // Reached by a click rather than through the queue, or crashed on the way.
+    frontier.markVisited('https://app.test/b');
+    frontier.markCrashed('https://app.test/c');
+    expect(frontier.queuedCount).toBe(0);
+  });
+
   it('guards query-routed and anchored hash-routed paths too', async () => {
     const frontier = makeFrontier({
       blockedPath: /route=account\/logout|^\/billing/i,

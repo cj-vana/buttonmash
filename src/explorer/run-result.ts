@@ -1,6 +1,16 @@
 import type { ResolvedConfig } from '../config/load';
 import { compareWithBaseline, isFailingFinding, type BaselineSnapshot } from '../baseline';
-import { EXIT, type LoggedAction, type RunResult, type Severity, type Signal } from '../core/types';
+import { normalizeUrl } from '../core/hash';
+import {
+  EXIT,
+  type Finding,
+  type LoggedAction,
+  type PageVisit,
+  type RunResult,
+  type RunStop,
+  type Severity,
+  type Signal,
+} from '../core/types';
 import { aggregateFindings } from '../detectors/aggregate';
 import { version } from '../version';
 
@@ -19,6 +29,9 @@ export interface FinalizeRunInput {
   screenshots: Map<number, string>;
   tracePath?: string;
   pagesVisited: number;
+  /** Normalized URLs of the pages visited, in visit order. */
+  pages?: string[];
+  stop?: RunStop;
   statesDiscovered: number;
   recordsCreated: number;
   completion: RunCompletion;
@@ -50,6 +63,25 @@ function redactedConfig(cfg: ResolvedConfig): Record<string, unknown> {
   }
   if (resolved.baseline?.path) resolved.baseline.path = '<baseline>';
   return resolved;
+}
+
+/** Actions and findings per visited page. Both are matched on the normalized URL. */
+function pageVisits(urls: string[], actions: LoggedAction[], findings: Finding[]): PageVisit[] {
+  const tally = (raw: string[]): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const url of raw) {
+      const key = normalizeUrl(url);
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const actionCounts = tally(actions.map((action) => action.url));
+  const findingCounts = tally(findings.map((finding) => finding.location.url));
+  return urls.map((url) => ({
+    url,
+    actions: actionCounts.get(url) ?? 0,
+    findings: findingCounts.get(url) ?? 0,
+  }));
 }
 
 /** Aggregate signals, apply the baseline, redact config, and build the report contract. */
@@ -115,6 +147,7 @@ export function finalizeRun(input: FinalizeRunInput): RunResult {
       exitCode,
       dryRun: input.cfg.guardrails.dryRun,
       complete,
+      stop: input.stop,
     },
     config: {
       seed: input.cfg.seed,
@@ -130,6 +163,7 @@ export function finalizeRun(input: FinalizeRunInput): RunResult {
       recordsCreated: input.recordsCreated,
       findingsBySeverity,
     },
+    pages: input.pages && pageVisits(input.pages, input.actions, findings),
     actions: input.actions,
     findings,
     baseline: baselineComparison,
