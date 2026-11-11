@@ -157,14 +157,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       # start your app under test here (e.g. npm ci && npm run start &) and wait for it…
-      - uses: cj-vana/buttonmash@v0.4.0
+      - uses: cj-vana/buttonmash@v0.5.0
         with:
           target: http://localhost:3000
           args: --seed ci --max-actions 800
 ```
 
-The action runs the buttonmash release that matches its own tag (`@v0.4.0`
-installs 0.4.0) and reads a committed `buttonmash.config.*` from the
+The action runs the buttonmash release that matches its own tag (`@v0.5.0`
+installs 0.5.0) and reads a committed `buttonmash.config.*` from the
 workspace. Its inputs:
 
 | Input | Default | What it does |
